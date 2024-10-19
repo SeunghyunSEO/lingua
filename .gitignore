@@ -5,3 +5,7 @@
 !requirements_nodeps.txt
 slurm-*.out
 wandb
+data/*
+!data/.gitkeep
+scripts/*.sh
+scripts/*.md

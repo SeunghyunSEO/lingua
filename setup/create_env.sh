@@ -47,5 +47,3 @@ elapsed_time=$((end_time - start_time))
 elapsed_minutes=$((elapsed_time / 60))
 
 echo "Environment $env_prefix created and all packages installed successfully in $elapsed_minutes minutes!"
-
-

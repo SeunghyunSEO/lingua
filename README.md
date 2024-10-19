@@ -1,3 +1,49 @@
+# tmp
+
+## TODO
+
+- [ ] test run (8B)
+- [ ] fused kernel patch
+- [ ] mup
+- [ ] logger
+    - [ ] activation / grad norm / param norm 
+- [ ] dmoe
+- [ ] zero1 shampoo
+
+
+## example run
+
+```bash
+# create new venv
+VENV_DIR=/path/to/dir/venv &&\
+VENV_NAME=lingua &&\
+python -m pip install --upgrade pip &&\
+pip install virtualenv &&\
+python -m virtualenv -p python3 $VENV_DIR/$VENV_NAME
+```
+
+```bash
+VENV_DIR=/path/to/dir/venv &&\
+VENV_NAME=lingua &&\
+source $VENV_DIR/$VENV_NAME/bin/activate
+```
+
+```bash
+# cd /path/to/dir/lingua
+pip install -r requirements.txt
+```
+
+```bash
+# cd /path/to/dir/lingua
+python ./setup/download_prepare_hf_data.py dclm_baseline_1.0
+```
+
+
+## TBD
+
+
+***
+
 # Meta Lingua
 
 **Mathurin Videau***, **Badr Youbi Idrissi***, Daniel Haziza, Luca Wehrstedt, Jade Copet, Olivier Teytaud, David Lopez-Paz. ***Equal and main contribution**

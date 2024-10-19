@@ -33,7 +33,12 @@ def parquet_to_jsonl(dataset, work_dir, src_dir, tgt_dir, ntasks=64):
         pipeline=[
             ParquetReader(
                 src_dir,
-                progress=True,
+
+                ## https://github.com/huggingface/datatrove/blob/371c014374dd1805e42fd58a8a91dcb1309abb2f/src/datatrove/pipeline/readers/parquet.py#L7
+                # progress=True,
+                file_progress=True,
+                doc_progress=True,
+                
                 glob_pattern="**/*.parquet",
             ),
             JsonlWriter(

@@ -32,7 +32,8 @@ model:
 data:
   root_dir: data/shuffled
   sources:
-    dclm_baseline_1.0: 1.0
+    # dclm_baseline_1.0: 1.0
+    fineweb_edu_10bt: 1.0
   batch_size: 2
   prefetch_size: 1024
   seq_len: 4096
@@ -66,13 +67,13 @@ eval:
   harness:
     tasks:
       - hellaswag
-      - nq_open
-      - piqa
-      - siqa
-      - csatqa
-      - winogrande
-      - arc
-      - race
+      # - nq_open
+      # - piqa
+      # - siqa
+      # - csatqa
+      # - winogrande
+      # - arc
+      # - race
       - gsm8k
       - bbh
       - mmlu

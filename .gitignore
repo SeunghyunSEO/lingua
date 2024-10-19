@@ -7,5 +7,6 @@ slurm-*.out
 wandb
 data/*
 !data/.gitkeep
-scripts/*.sh
-scripts/*.md
+exp_logs/scripts/*.sh
+exp_logs/scripts/*.md
+exp_logs/assets/logs/*

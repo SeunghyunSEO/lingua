@@ -4,11 +4,9 @@ https://github.com/mosaicml/llm-foundry/blob/main/tests/models/layers/test_dmoe.
 
 import os
 import copy
-from contextlib import nullcontext
 from functools import partial
 from typing import Optional, Union
 
-import pytest
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
@@ -22,13 +20,14 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.tensor.parallel.ddp import _pre_dp_module_transform
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from src.dmoe import dMoE
-from src.ffn import dtensorify_param
-from src.utils import (
+from dmoe import dMoE
+from ffn import dtensorify_param
+from utils import (
     set_seed,
     init_dist,
     print_message_with_master_process,
     _get_torch_dtype,
+    cleanup_distributed,
 )
 
 try:
@@ -231,6 +230,7 @@ def test_dmoe(
     torch_y = torch_dmoe(x)
     mb_y = mb_dmoe(x)
     torch.testing.assert_close(torch_y, mb_y)
+    cleanup_distributed()
 
 if __name__ == "__main__":
     test_dmoe()

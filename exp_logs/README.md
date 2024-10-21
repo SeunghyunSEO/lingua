@@ -99,5 +99,21 @@ node0:23440:23664 [0] NCCL INFO ncclCommInitRank comm 0x563d5b2b3360 rank 0 nran
 ...
 ```
 
+```
+[Alignment-Learning#15.202] tmp@node0:/tmp$ tree -L 3
+.
+├── checkpoints
+├── config.yaml
+├── metrics.jsonl
+├── profiling
+│   ├── memory_trace_plot
+│   │   ├── 000004_node0_23440.html
+│   │   └── 000004_node0_23441.html
+│   └── profile_CPU_CUDA_000104
+│       ├── node0_23440.1729363752450987095.pt.trace.json.gz
+│       └── node0_23441.1729363752459155825.pt.trace.json.gz
+└── train.log
+```
+
 
 ## TBD

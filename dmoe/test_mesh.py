@@ -1,8 +1,11 @@
 '''
 https://pytorch.org/tutorials/recipes/distributed_device_mesh.html
 https://pytorch.org/tutorials/intermediate/TP_tutorial.html
+https://pytorch.org/tutorials/intermediate/FSDP_tutorial.html
+
 https://github.com/pytorch/examples/blob/main/distributed/tensor_parallelism/fsdp_tp_example.py
 https://github.com/pytorch/torchtitan/blob/main/torchtitan/parallelisms/parallelize_llama.py
+https://github.com/facebookresearch/lingua/blob/31b20e172aa9a3e68a73cb501d689291039fc065/lingua/distributed.py#L419-L460
 '''
 
 import os
@@ -14,25 +17,35 @@ import torch.nn as nn
 
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import ShardingStrategy
 from torch.distributed.tensor.parallel import ColwiseParallel, RowwiseParallel, parallelize_module
 from torch.distributed.tensor.parallel import PrepareModuleInput, SequenceParallel
 from torch.distributed._tensor import Partial, Replicate, Shard
 from torch.distributed.tensor.parallel import loss_parallel
 
 from transformers import AutoTokenizer
-from src.model import Transformer
-from src.torch_profiler_utils import get_torch_profiler
-from src.utils import (
+from model import Transformer
+from utils import (
     set_seed,
     init_dist,
     print_message_with_master_process,
     _get_torch_dtype,
+    cleanup_distributed,
+)
+from torch_profiler_utils import (
+    ContextManagers,
+    get_torch_profiler,
 )
 
 # from pdb import set_trace as Tra
 from multiprocessing_pdb import MultiprocessingPdb
 Tra = MultiprocessingPdb().set_trace
+
+USE_TORCH_PROFILER = True
+TORCH_PROFILER_LOG_DIR = './assets/torch_profiler_logs'
+# USE_LOSS_PARALLEL = True
+USE_LOSS_PARALLEL = False
 
 
 def test_mesh():
@@ -41,12 +54,13 @@ def test_mesh():
 
     rank, world_size = init_dist()
     device = f"cuda:{rank}"
+    set_seed()
 
     tokenizer = AutoTokenizer.from_pretrained('gpt2')
     vocab_size = len(tokenizer)
     block_size = tokenizer.model_max_length
-    hidden, nhead, nlayer = 256, 8, 4
-    model = Transformer(vocab_size, block_size, hidden, nhead, nlayer).to("cuda")
+    hidden, nhead, nlayer = 1024, 8, 4
+    model = Transformer(vocab_size, block_size, hidden, nhead, nlayer).to(device)
 
 
     ################################################################################
@@ -68,8 +82,8 @@ def test_mesh():
     )
     fsdp_mesh = mesh_3d["replicate", "shard"]
     tp_mesh = mesh_3d["tp"]
-    replicate_group = fsdp_mesh["replicate"].get_group()
-    shard_group = fsdp_mesh["shard"].get_group()
+    replicate_group = mesh_3d["replicate"].get_group()
+    shard_group = mesh_3d["shard"].get_group()
     tp_group = tp_mesh.get_group()
     print_message_with_master_process(rank, f'''
     mesh_3d: {mesh_3d}
@@ -87,7 +101,7 @@ def test_mesh():
     # )
     # fsdp_mesh = mesh_2d["shard"]
     # tp_mesh = mesh_2d["tp"]
-    # shard_group = fsdp_mesh["shard"].get_group()
+    # shard_group = mesh_2d["shard"].get_group()
     # tp_group = tp_mesh.get_group()
     # print_message_with_master_process(rank, f'''
     # mesh_2d: {mesh_2d}
@@ -136,7 +150,6 @@ def test_mesh():
 
         ################################################################################
         ## apply word embedding and loss parallel
-        use_loss_parallel = True
         tp_plan = {
             "model.wte": RowwiseParallel(
                 input_layouts=Replicate(),
@@ -145,8 +158,8 @@ def test_mesh():
             "model.ln": SequenceParallel(),
             "lm_head": ColwiseParallel(
                 input_layouts=Shard(1), # time dimension
-                output_layouts=Shard(-1) if use_loss_parallel else Replicate(),
-                use_local_output=not use_loss_parallel,
+                output_layouts=Shard(-1) if USE_LOSS_PARALLEL else Replicate(),
+                use_local_output=not USE_LOSS_PARALLEL,
             ),
         }
         parallelize_module(
@@ -198,27 +211,65 @@ def test_mesh():
     model: {model}
     ''')
 
+    ################################################################################
+    ## define optimizer (it should be compatible with FSDP)
+    lr = 1e-2
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, foreach=True)
+
+
+    ################################################################################
+    # get torch profiler
+    if USE_TORCH_PROFILER:
+        num_wait_steps, num_warmup_steps, num_active_steps, num_repeat = 1, 2, 3, 1
+        num_iter = int((num_wait_steps + num_warmup_steps + num_active_steps)*num_repeat)
+        use_loss_parallel_ = USE_LOSS_PARALLEL and (TP != 1)
+        context = [
+            get_torch_profiler(
+                num_wait_steps=num_wait_steps,
+                num_warmup_steps=num_warmup_steps,
+                num_active_steps=num_active_steps,
+                num_repeat=num_repeat,
+
+                root_dir=TORCH_PROFILER_LOG_DIR,
+                save_dir_name=f'mesh_test_DP_{DP}_SHARD_{SHARD}_TP_{TP}_USE_LOSS_PARALLEL_{use_loss_parallel_}'
+            )
+        ]
+    else:
+        num_iter = 16
+        assert num_iter % (batch_size * world_size) == 0
+        num_iter //= (batch_size * world_size)
+        context = []
 
     ################################################################################
     ## forward and compute loss
-    sent = "i love tensor parallelism."
+    sent = "i love lingua and 3d parallelism :)"
     input_ids = tokenizer(sent, return_tensors='pt').to(device)
     x = input_ids['input_ids']
     labels = input_ids['input_ids'][:, 1:]
-
     model.train()
-    pred = model(x)
 
-    if use_loss_parallel:
-        with loss_parallel():
-            # assuming pred and labels are of the shape [batch, seq, vocab]
-            loss = F.cross_entropy(pred[..., :-1, :].flatten(0, 1), labels.flatten(0, 1))
-            loss.backward()
-    else:
-        loss = F.cross_entropy(pred[..., :-1, :].flatten(0, 1), labels.flatten(0, 1))
-        loss.backward()
+    with ContextManagers(context) as p:
+        for i in range(num_iter):
 
-    print_message_with_master_process(rank, loss)
+            # forward
+            pred = model(x)
+            if USE_LOSS_PARALLEL:
+                with loss_parallel():
+                    # assuming pred and labels are of the shape [batch, seq, vocab]
+                    loss = F.cross_entropy(pred[..., :-1, :].flatten(0, 1), labels.flatten(0, 1))
+                    loss.backward()
+            else:
+                loss = F.cross_entropy(pred[..., :-1, :].flatten(0, 1), labels.flatten(0, 1))
+                loss.backward()
+            print_message_with_master_process(rank, f'{i}th step loss: {loss}')
+
+            # clear and profile
+            optimizer.step()
+            optimizer.zero_grad()
+            if USE_TORCH_PROFILER:
+                p.step()
+
+    cleanup_distributed()
 
 if __name__ == "__main__":
     test_mesh()

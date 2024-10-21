@@ -19,7 +19,7 @@ bash setup/create_env.sh
 # or if you have access to a slurm cluster
 sbatch setup/create_env.sh
 ```
-Once that is done your can activate the environement 
+Once that is done your can activate the environment 
 ```
 conda activate lingua_<date>
 ```
@@ -94,7 +94,7 @@ Meta Lingua is structured as follows:
    ┗ 📂plots
 ```
 
-The `lingua` folder contains some essential and reusable components, while the apps folder contains scripts that put those components together. For instance the main training loop is in `apps/main`. We highly encourage you to use that as a template and modify it however you please to suit your experiments. 
+The `lingua` folder contains some essential and reusable components, while the `apps` folder contains scripts that put those components together. For instance the main training loop is in `apps/main`. We highly encourage you to use that as a template and modify it however you please to suit your experiments. 
 
 Nothing is sacred in Meta Lingua. We've specifically tried to make it as easily modifiable as possible! So feel free to branch out and modify anything. 
 

@@ -213,7 +213,7 @@ def main():
     @dataclass
     class DummyArgs:
         name: str
-        mode: LMTransformerArgsgs
+        model: LMTransformerArgsgs
 
     @dataclass
     class LMTransformerArgsgs:

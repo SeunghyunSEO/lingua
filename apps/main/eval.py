@@ -203,6 +203,22 @@ def launch_eval(cfg: EvalArgs):
         )
     del generator
 
+@torch.no_grad()
+def eval_loss(data_loader, model):
+    model.eval()
+    total_loss, nstep = torch.tensor(0.0).cuda(), 0
+    for batch in data_loader:
+        batch = torch.tensor(batch, dtype=torch.long)
+        input_ids = batch[:, :, 0].cuda()
+        labels = batch[:, :, 1].cuda()
+        loss = model(input_ids, labels)
+        torch.distributed.all_reduce(loss, op=torch.distirubted.ReduceOp.SUM)
+        total_loss += loss
+        nstep += 1
+    eval_loss = total_loss.item()/nstep
+    model.train()
+    return eval_loss
+    
 
 def main():
     """

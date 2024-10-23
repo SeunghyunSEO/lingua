@@ -18,11 +18,13 @@ from lingua import probe
 
 flex_attention_comp = torch.compile(flex_attention)
 
+from fused_kernels.fused_rms_norm import FusedRMSNorm
+
 
 class InitStdFactor(Enum):
     DISABLED = "disabled"  # Init std is divided by 1.0
     GLOBAL_DEPTH = "global_depth"  # Init std is divided by sqrt(2*n_layers)
-    CURRENT_DEPTH = "current_depth"  # Init std is divided by sqrt(2*deoth)
+    CURRENT_DEPTH = "current_depth"  # Init std is divided by sqrt(2*depth)
     DIM_RATIO = "dim_ratio"  # Init std is divided by model_dim/4096
 
 
@@ -33,19 +35,38 @@ class BaseTransformerArgs:
     head_dim: Optional[int] = None
     n_heads: Optional[int] = None
     n_kv_heads: Optional[int] = None
-
     ffn_dim_multiplier: Optional[float] = None
-
     multiple_of: int = 256
 
     norm_eps: float = 1e-5
-
     rope_theta: float = 10000.0
 
     init_base_std: Optional[float] = None
     init_std_factor: str = "disabled"
 
     max_seqlen: int = 1024
+
+    ########################################
+    ## https://arxiv.org/abs/2203.03466
+    mup: bool = False
+
+    base_dim: Optional[int] = None
+    base_head_dim: Optional[int] = None
+    base_n_heads: Optional[int] = None
+    base_n_kv_heads: Optional[int] = None
+    base_ffn_dim_multiplier: Optional[float] = None
+    base_multiple_of: Optional[int] = None
+
+    input_mult: Optional[float] = None
+    output_mult: Optional[float] = None
+
+    readout_zero_init: Optional[bool] = None
+    query_zero_init: Optional[bool] = None
+
+    ########################################
+    ## extra fused kernel (except sdpa)
+    fused_rms_norm: bool = False
+    fused_ce: bool = False
 
 
 def cross_entropy(pred, target, **kwargs):
@@ -295,6 +316,7 @@ class RMSNorm(nn.Module):
 class Attention(nn.Module):
     def __init__(
         self,
+        args,
         dim: int,
         head_dim: int,
         n_heads: int,
@@ -302,6 +324,7 @@ class Attention(nn.Module):
         rope_theta: float,
     ):
         super().__init__()
+        self.args = args
 
         self.dim = dim
         self.head_dim = head_dim
@@ -385,6 +408,7 @@ class Attention(nn.Module):
                 xv,
                 is_causal=is_causal,
                 attn_mask=mask,
+                scale=float(self.head_dim)**-1.0 if self.args.mup else float(self.head_dim)**-0.5 
             )
             output = output.transpose(1, 2).contiguous()  # B H S D -> B S H D
         else:
@@ -397,22 +421,65 @@ class Attention(nn.Module):
         return output
 
     def reset_parameters(self, init_std=None, factor=1.0):
-        init_std = init_std or (self.dim ** (-0.5))
-        init_std = init_std / factor
 
-        for w in [self.wq, self.wk, self.wv, self.wo]:
+        if self.args.mup:
+            assert init_std is not None
+            assert InitStdFactor(self.args.init_std_factor) in [InitStdFactor.GLOBAL_DEPTH, InitStdFactor.CURRENT_DEPTH]
+            base_head_dim = self.args.base_head_dim or self.args.base_dim // self.args.base_n_heads
+            in_proj_scale = float(self.head_dim/base_head_dim) ** -0.5
+            out_proj_scale = float(self.head_dim/base_head_dim) ** -0.5
+            out_proj_scale /= factor
+            for w in [self.wq, self.wk, self.wv]:
+                nn.init.trunc_normal_(
+                    w.weight,
+                    mean=0.0,
+                    std=init_std *in_proj_scale,
+                    a=-3 * init_std *in_proj_scale,
+                    b=3 * init_std *in_proj_scale,
+                )
+            # if self.args.query_zero_init:
+            #     self.wq.weight.data.zero_()
             nn.init.trunc_normal_(
-                w.weight,
+                self.wo.weight,
                 mean=0.0,
-                std=init_std,
-                a=-3 * init_std,
-                b=3 * init_std,
+                std=init_std *out_proj_scale,
+                a=-3 * init_std *out_proj_scale,
+                b=3 * init_std *out_proj_scale,
             )
+        else:
+            init_std = init_std or (self.dim ** (-0.5))
+            init_std = init_std / factor
+            for w in [self.wq, self.wk, self.wv, self.wo]:
+                nn.init.trunc_normal_(
+                    w.weight,
+                    mean=0.0,
+                    std=init_std,
+                    a=-3 * init_std,
+                    b=3 * init_std,
+                )
 
+def adjust_hidden_dim(hidden_dim, ffn_dim_multiplier, multiple_of):
+    '''
+    >>> adjust_hidden_dim(4096*4, 1.3, 256)
+    14336
+    >>> adjust_hidden_dim(512*4, 1.3, 256)
+    1792
+    >>> adjust_hidden_dim(128*4, 1.3, 256)
+    512
+    >>> adjust_hidden_dim(128*4, 1.3, 64)
+    448
+    (4096/128) == (14336/448)
+    '''
+    hidden_dim = int(2 * hidden_dim / 3)
+    if ffn_dim_multiplier is not None:
+        hidden_dim = int(ffn_dim_multiplier * hidden_dim)
+    hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+    return hidden_dim
 
 class FeedForward(nn.Module):
     def __init__(
         self,
+        args,
         dim: int,
         hidden_dim: int,
         multiple_of: int,
@@ -420,15 +487,26 @@ class FeedForward(nn.Module):
         mp_size: int = 1,
     ):
         super().__init__()
-
-        hidden_dim = int(2 * hidden_dim / 3)
-        if ffn_dim_multiplier is not None:
-            hidden_dim = int(ffn_dim_multiplier * hidden_dim)
-        hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-        assert hidden_dim % mp_size == 0
+        self.args = args
 
         self.dim = dim
+        hidden_dim = adjust_hidden_dim(
+            hidden_dim, 
+            ffn_dim_multiplier, 
+            multiple_of
+        )
+        assert hidden_dim % mp_size == 0
         self.hidden_dim = hidden_dim
+
+        if self.args.mup:
+            self.base_dim = self.args.base_dim or self.args.base_dim // self.args.base_n_heads
+            base_hidden_dim = adjust_hidden_dim(
+                4 * self.base_dim, 
+                self.args.base_ffn_dim_multiplier, 
+                self.args.base_multiple_of
+            )
+            assert base_hidden_dim % mp_size == 0
+            self.base_hidden_dim = base_hidden_dim
 
         self.w1 = nn.Linear(
             dim,
@@ -454,30 +532,55 @@ class FeedForward(nn.Module):
         return output
 
     def reset_parameters(self, init_std=None, factor=1.0):
-        in_init_std = init_std or (self.dim ** (-0.5))
-        out_init_std = init_std or (self.hidden_dim ** (-0.5))
-        in_init_std = in_init_std / factor
-        out_init_std = out_init_std / factor
-        for w in [self.w1, self.w3]:
+        if self.args.mup:
+            assert init_std is not None
+            assert InitStdFactor(self.args.init_std_factor) in [InitStdFactor.GLOBAL_DEPTH, InitStdFactor.CURRENT_DEPTH]
+            in_init_std = init_std
+            out_init_std = init_std * (self.base_hidden_dim/self.base_dim)**-0.5
+            in_proj_scale = float(self.dim/self.base_dim) ** -0.5
+            out_proj_scale = float(self.hidden_dim/self.base_hidden_dim) ** -0.5
+            out_proj_scale /= factor # discount residual branch
+            for w in [self.w1, self.w3]:
+                nn.init.trunc_normal_(
+                    w.weight,
+                    mean=0.0,
+                    std=in_init_std *in_proj_scale,
+                    a=-3 * in_init_std *in_proj_scale,
+                    b=3 * in_init_std *in_proj_scale,
+                )
             nn.init.trunc_normal_(
-                w.weight,
+                self.w2.weight,
                 mean=0.0,
-                std=in_init_std,
-                a=-3 * in_init_std,
-                b=3 * in_init_std,
+                std=out_init_std *out_proj_scale,
+                a=-3 * out_init_std *out_proj_scale,
+                b=3 * out_init_std *out_proj_scale,
             )
-        nn.init.trunc_normal_(
-            self.w2.weight,
-            mean=0.0,
-            std=out_init_std,
-            a=-3 * out_init_std,
-            b=3 * out_init_std,
-        )
+        else:
+            in_init_std = init_std or (self.dim ** (-0.5))
+            out_init_std = init_std or (self.hidden_dim ** (-0.5))
+            in_init_std = in_init_std / factor
+            out_init_std = out_init_std / factor
+            for w in [self.w1, self.w3]:
+                nn.init.trunc_normal_(
+                    w.weight,
+                    mean=0.0,
+                    std=in_init_std,
+                    a=-3 * in_init_std,
+                    b=3 * in_init_std,
+                )
+            nn.init.trunc_normal_(
+                self.w2.weight,
+                mean=0.0,
+                std=out_init_std,
+                a=-3 * out_init_std,
+                b=3 * out_init_std,
+            )
 
 
 class TransformerBlock(nn.Module):
     def __init__(self, args: BaseTransformerArgs):
         super().__init__()
+        self.args = args
 
         assert (args.head_dim is not None) or (
             args.n_heads is not None
@@ -490,6 +593,7 @@ class TransformerBlock(nn.Module):
         assert args.dim % args.n_heads == 0
 
         self.attention = Attention(
+            args=args,
             dim=args.dim,
             head_dim=self.head_dim,
             n_heads=self.n_heads,
@@ -497,13 +601,15 @@ class TransformerBlock(nn.Module):
             rope_theta=args.rope_theta,
         )
         self.feed_forward = FeedForward(
+            args=args,
             dim=args.dim,
             hidden_dim=4 * args.dim,
             multiple_of=args.multiple_of,
             ffn_dim_multiplier=args.ffn_dim_multiplier,
         )
-        self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
-        self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
+        norm = FusedRMSNorm if self.args.fused_rms_norm else RMSNorm
+        self.attention_norm = norm(args.dim, eps=args.norm_eps)
+        self.ffn_norm = norm(args.dim, eps=args.norm_eps)
 
     def forward(
         self,
@@ -535,6 +641,7 @@ class TransformerBlock(nn.Module):
 class BaseTransformer(nn.Module):
     def __init__(self, args: BaseTransformerArgs):
         super().__init__()
+        self.args = args
         self.dim = args.dim
         self.init_base_std = args.init_base_std
         self.init_std_factor = InitStdFactor(args.init_std_factor)
@@ -568,13 +675,12 @@ class BaseTransformer(nn.Module):
         self.rope_embeddings.reset_parameters()
 
     def init_weights(self):
-        self.reset_parameters()
+        self.reset_parameters(init_std=self.init_base_std)
         for depth, layer in enumerate(self.layers):
             factor = {
-                InitStdFactor.CURRENT_DEPTH: (2 * (depth + 1)) ** 0.5,
-                InitStdFactor.GLOBAL_DEPTH: (2 * (len(self.layers) + 1)) ** 0.5,
-                InitStdFactor.DIM_RATIO: self.dim / 4096,
-                InitStdFactor.DISABLED: 1.0,
+                InitStdFactor.CURRENT_DEPTH: (2 * (depth + 1)) ** 0.5, # mitchell init
+                InitStdFactor.GLOBAL_DEPTH: (2 * (len(self.layers) + 1)) ** 0.5,  # classic residual discount (gpt-2 like)
+                InitStdFactor.DIM_RATIO: self.dim / 4096, # it's like mup
+                InitStdFactor.DISABLED: 1.0, # dumb
             }[self.init_std_factor]
-
             layer.init_weights(self.init_base_std, factor)

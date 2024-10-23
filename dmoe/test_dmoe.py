@@ -151,6 +151,9 @@ def test_dmoe(
     moe_world_size: {moe_world_size}
     moe_dp_dim: {moe_dp_dim}
     device_mesh: {device_mesh}
+    device_mesh['weight_parallel']: {device_mesh['weight_parallel']}
+    device_mesh['expert_parallel']: {device_mesh['expert_parallel']}
+
     expert_parallel_group: {expert_parallel_group}
     expert_parallel_group.size(): {expert_parallel_group.size()}
     expert_parallel_group.rank(): {expert_parallel_group.rank()}
@@ -211,6 +214,24 @@ def test_dmoe(
 
     # Load mb_dmoe state dict to torch dmoe
     torch_dmoe.module.load_state_dict(mb_dmoe_state_dict, strict=True)
+
+    tmp_string = ''
+    for n, p in torch_dmoe.named_parameters(): 
+        tmp_string += f'{n} device: {p.device}\n'
+    print(f'''
+    [dmoe details]
+    rank: {rank}
+    allocated devices : {tmp_string}
+    ''')
+
+    tmp_string = ''
+    for n, p in mb_dmoe.named_parameters(): 
+        tmp_string += f'{n} device: {p.device}\n'
+    print(f'''
+    [megablocks dmoe details]
+    rank: {rank}
+    allocated devices : {tmp_string}
+    ''')
 
     # Run train_step check
     torch_y = torch_dmoe(x)

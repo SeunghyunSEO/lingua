@@ -2,13 +2,15 @@
 
 ## TODO
 
-- [ ] test run (8B)
+- [x] test run
+- [x] mup
 - [ ] fused kernel patch
-- [ ] mup
 - [ ] logger
-    - [ ] activation / grad norm / param norm 
+    - [ ] activation norm 
+    - [ ] grad norm
+    - [ ] param norm 
 - [ ] dmoe
-- [ ] zero1 shampoo
+- [ ] dist shampoo
 
 
 ## example run
@@ -16,7 +18,6 @@
 ```bash
 # create new venv
 VENV_DIR=/path/to/dir/venv &&\
-# VENV_DIR=/mnt/chatbot30TB/shseo/venv &&\
 VENV_NAME=lingua &&\
 python -m pip install --upgrade pip &&\
 pip install virtualenv &&\
@@ -116,4 +117,23 @@ node0:23440:23664 [0] NCCL INFO ncclCommInitRank comm 0x563d5b2b3360 rank 0 nran
 ```
 
 
-## TBD
+## mup
+
+```bash
+export LOCAL_RANK=0 &&\
+export WORLD_SIZE=2 &&\
+export MASTER_ADDR=node0 &&\
+export MASTER_PORT=23458
+
+export WANDB_PROJECT_NAME='lingua'
+export WANDB_EXP_NAME='llama_8b_mup_proxy'
+export DUMP_DIR="exp_logs/assets/logs/test_${CONFIG}_world_${WORLD_SIZE}_mup"
+
+export CONFIG=llama_8B_proxy
+export LR=0.001
+export MIN_LR=0.0001
+
+torchrun --nproc-per-node $WORLD_SIZE \
+-m apps.main.train \
+config=apps/main/configs/${CONFIG}.yaml
+```

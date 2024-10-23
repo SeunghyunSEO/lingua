@@ -429,6 +429,7 @@ def parallelize_model(
             ), "dp_shard must be 1 for no_shard fsdp_type"
 
         fsdp_config = dict(
+            # https://github.com/pytorch/torchtitan/blob/main/docs/fsdp.md
             mp_policy=(
                 MixedPrecisionPolicy(
                     param_dtype=param_dtype,

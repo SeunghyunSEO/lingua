@@ -23,6 +23,8 @@ from lingua.transformer import (
     RMSNorm,
     cross_entropy,
 )
+from fused_kernels.fused_rms_norm import FusedRMSNorm
+from fused_kernels.fused_ce import fused_cross_entropy
 
 
 def create_causal_mask(seqlen, attn_impl, sliding_window):
@@ -80,7 +82,8 @@ class LMTransformer(BaseTransformer):
 
         self.tok_embeddings = torch.nn.Embedding(args.vocab_size, args.dim)
 
-        self.norm = RMSNorm(args.dim, eps=args.norm_eps)
+        norm = FusedRMSNorm if self.args.fused_rms_norm else RMSNorm
+        self.norm = norm(args.dim, eps=args.norm_eps)
 
         self.output = nn.Linear(
             args.dim,
@@ -103,7 +106,10 @@ class LMTransformer(BaseTransformer):
     ):
         bsz, seqlen = token_values.shape
 
+        scale_ = self.args.input_mult if self.args.mup else 1.0
         h = self.tok_embeddings(token_values)
+        if scale_ != 1.0:
+            h = scale_*h
 
         mask = (
             mask
@@ -113,32 +119,60 @@ class LMTransformer(BaseTransformer):
 
         h = super().forward(h, tok_idx=tok_idx, mask=mask, attn_impl=attn_impl)
 
-        logits = self.output(self.norm(h))
-        if target is not None:
-            return cross_entropy(logits, target)
+        dim = self.args.dim or int(self.args.head_dim * self.args.n_heads)
+        base_dim = self.args.base_dim or int(self.args.base_head_dim * self.args.base_n_heads)
+        scale_ = self.args.output_mult*(dim/base_dim)**-1.0 if self.args.mup else 1.0
+
+        if self.args.fused_ce:
+            raise NotImplementedError("currently not supported because of Dtensor")
+            assert target is not None, "fused ce need target because it does not materialize logit to save VRAM memory"
+            assert h.size(1) == target.size(1)
+            h = scale_ * self.norm(h).float()
+            h = h.contiguous().view(-1, h.size(-1))
+            target = target.contiguous().view(-1)
+            return fused_cross_entropy(h, self.output.weight, target)
         else:
-            return logits
+            logits = self.output(scale_ * self.norm(h)).float()
+            if target is not None:
+                return cross_entropy(logits, target)
+            else:
+                return logits
 
     def reset_parameters(self, init_std=None):
         # Either use fixed base std or sqrt model dim
         super().reset_parameters()
-        init_std = init_std or (self.dim ** (-0.5))
         self.norm.reset_parameters()
-        nn.init.trunc_normal_(
-            self.tok_embeddings.weight,
-            mean=0.0,
-            std=init_std,
-            a=-3 * init_std,
-            b=3 * init_std,
-        )
-        if not self.weight_tying:
+
+        if self.args.mup:
+            assert init_std is not None
+            assert not self.weight_tying
+            for w in [self.tok_embeddings.weight, self.output.weight]:
+                nn.init.trunc_normal_(
+                    w,
+                    mean=0.0,
+                    std=init_std,
+                    a=-3 * init_std,
+                    b=3 * init_std,
+                )
+            # if self.args.readout_zero_init:
+            #     self.output.weight.zero_()
+        else:
+            init_std = init_std or (self.dim ** (-0.5))
             nn.init.trunc_normal_(
-                self.output.weight,
+                self.tok_embeddings.weight,
                 mean=0.0,
                 std=init_std,
                 a=-3 * init_std,
                 b=3 * init_std,
             )
+            if not self.weight_tying:
+                nn.init.trunc_normal_(
+                    self.output.weight,
+                    mean=0.0,
+                    std=init_std,
+                    a=-3 * init_std,
+                    b=3 * init_std,
+                )
 
 
 # Optional policy for activation checkpointing. With None, we stick to the default (defined distributed.py: default_no_recompute_ops)

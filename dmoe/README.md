@@ -36,7 +36,19 @@
 - Installation
 
 ```bash
+python -m pip install --upgrade pip
+
+# megablocks
 pip install megablocks==0.6.1
+
+# TE
+git clone https://github.com/NVIDIA/TransformerEngine
+cd TransformerEngine
+git checkout release_v1.7
+git submodule update --init --recursive
+export NVTE_FRAMEWORK=pytorch 
+pip install .
+cd ..
 ```
 
 ```bash
@@ -159,8 +171,6 @@ test_mesh.py
 
 ### just DP
 
-<details>
-
 ```bash
 export DP=2 &&\
 export SHARD=1 &&\
@@ -168,6 +178,8 @@ export TP=1
 torchrun --nproc_per_node=$WORLD_SIZE --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT \
 test_mesh.py
 ```
+
+<details>
 
 ```python
     mesh_3d: DeviceMesh('cuda', [[[0]], [[1]]], mesh_dim_names=('replicate', 'shard', 'tp'))

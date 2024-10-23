@@ -421,7 +421,6 @@ def build_mb_dmoe(
         bias=bias,
         kwargs=kwargs,
     )
-
     ffn = megablocks.layers.dmoe.dMoE(args)
 
     dmoe_fused_init_setup(

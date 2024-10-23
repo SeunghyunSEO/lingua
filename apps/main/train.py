@@ -245,6 +245,7 @@ def train(args: TrainArgs):
 
         logger.info(f"Running on dp rank : {dp_rank}")
         logger.info(f"Running on dp size : {dp_degree}")
+        logger.info(f"args.distributed: {args.distributed}")
 
         torch.manual_seed(args.seed)
         logger.info(f"Building model")
@@ -283,8 +284,8 @@ def train(args: TrainArgs):
         check_model_value_range(model, range=10.0, std=1.0)
 
         # log model size
-
         logger.info(f"Model size: {model_param_count:,} total parameters")
+        logger.info(f"Model description: {model}")
 
         gpu_memory_monitor = GPUMemoryMonitor("cuda")
         logger.info(
@@ -294,7 +295,7 @@ def train(args: TrainArgs):
         logger.info(f"GPU memory usage: {gpu_memory_monitor}")
 
         # build optimizer after apply parallelisms to the model
-        optimizer, scheduler = build_optimizer(model, args.optim, args.steps)
+        optimizer, scheduler = build_optimizer(model, args.optim, args.steps, args.model)
         data_loader_state = init_dataloader_state_from_args(
             args.data, dp_rank, dp_degree
         )
@@ -486,6 +487,7 @@ def train(args: TrainArgs):
                         "speed": {
                             "wps": wps,
                             "FLOPS": FLOPS,
+                            "MFU": (FLOPS/312e12)*100, # A100
                             "curr_iter_time": curr_iter_time,
                             "data_load_time": data_load_time,
                         },
@@ -514,6 +516,7 @@ def train(args: TrainArgs):
                     f"  acc: {train_state.acc_step}"
                     f"  loss: {round(loss.item(),4):>7}"
                     f"  grad: {grad_norm:.2e}"
+                    f"  MFU: {(FLOPS/312e12)*100:.2f}"
                     f"  flops: {FLOPS:.2e}"
                     f"  wps: {wps:.2e}"
                     f"  iter: {curr_iter_time:>7}"

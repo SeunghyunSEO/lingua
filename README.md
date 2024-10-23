@@ -4,7 +4,7 @@
 
 Meta Lingua is a minimal and fast LLM training and inference library designed for research. Meta Lingua uses easy-to-modify PyTorch components in order to try new architectures, losses, data, etc. We aim for this code to enable end to end training, inference and evaluation as well as provide tools to better understand speed and stability. While Meta Lingua is currently under development, we provide you with multiple `apps` to showcase how to use this codebase.
 
-![](lingua_overview.png)
+![Overview of lingua](lingua_overview.svg)
 
 ## Quick start
 
@@ -299,6 +299,20 @@ python -m lingua.stool script=apps.main.eval config=apps/main/configs/eval.yaml 
  ┣ 📜metrics.jsonl
  ┗ 📜submit.slurm
 ```
+
+## Related repositories
+
+Here we highlight some related work that is complementary to this one. Most important being [torchtitan](https://github.com/pytorch/torchtitan) and [torchtune](https://github.com/pytorch/torchtune). 
+
+Lingua is designed for researchers who want to experiment with new ideas for LLM pretraining and get quick feedback on both training/inference speed and downstream benchmarks. Our goal is to lower the barrier to entry for LLM research by providing a lightweight and focused codebase.
+
+We see torchtitan, torchtune, and lingua as complementary tools. Torchtitan is excellent for large-scale work because it features 3D parallelism and is likely to integrate the latest PyTorch distributed training features more quickly, thanks to its close ties to the PyTorch team. On the other hand, Torchtune excels at fine-tuning, especially when GPU resources are limited, by offering various fine-tuning strategies like LoRA, QLoRA, DPO, and PPO.
+
+A typical workflow could look like this: you might first test a new idea in Lingua, then scale it up further with Torchtitan, and finally use Torchtune for instruction or preference fine-tuning.
+
+Although there's definitely some overlap among these codebases, we think it's valuable to have focused tools for different aspects of LLM work. For example, Torchtitan aims to showcase the latest distributed training features of PyTorch in a clean, minimal codebase, but for most research, you really don't need every feature PyTorch has to offer or the capability to scale to 100B parameters on 4096 GPUs. For instance, we think that FSDP + torch compile will cover 90% of all needs of a researcher. With lingua, we tried to ask "What's the minimal set of features needed to draw solid conclusions on the scalability of idea X?"
+
+We believe this targeted approach helps researchers make progress faster without the mental overhead of using many techniques that might not be needed.
 
 ## Citation
 

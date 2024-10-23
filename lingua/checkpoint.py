@@ -177,8 +177,10 @@ class CheckpointManager:
         dp_rank = 0
         tp_rank = 0
         if device_mesh is not None:
-            if "dp" in device_mesh.mesh_dim_names:
-                dp_rank = device_mesh.get_local_rank("dp")
+            if "dp_replicate" in device_mesh.mesh_dim_names:
+                dp_rank = device_mesh.get_local_rank("dp_replicate")
+                if "dp_shard" in device_mesh.mesh_dim_names:
+                    dp_rank = dp_rank * device_mesh["dp_replicate"].size() + device_mesh.get_local_rank("dp_shard")
             if "tp" in device_mesh.mesh_dim_names:
                 tp_rank = device_mesh.get_local_rank("tp")
         return dp_rank, tp_rank

@@ -15,12 +15,6 @@ from lingua.args import dataclass_from_dict
 @dataclass
 class StoolArgs:
     config: Any = None
-    # Note: this should be set either here or in the job config, because it is quite confusing to know which one is used
-    # similarly it seems a bit off to use this one while the rest (e.g. dump_dir) is currently set in the config
-    # but I (@jadecopet) am personally more comfortable in having this + dump_dir as part of the stool.py args
-    # rather than the config as it is annoying to keep editing the config. At the same time, it is quite convenient to have
-    # all the self-contained information in one place (e.g. sharing the config, you know where to expect to find the ran experiment).
-    # name: str = "lingua"  # The name of the slurm job.
     launcher: str = "sbatch"  # Can be sbatch or bash if already in salloc
     script: str = "apps.main.train"  # The script to run.
     copy_code: bool = True  # Wether to copy code to dump dir

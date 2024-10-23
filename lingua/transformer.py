@@ -56,7 +56,6 @@ def cross_entropy(pred, target, **kwargs):
     )
 
 
-# xlformer Impl
 def repeat_kv(x: torch.Tensor, n_rep: int, dim: int) -> torch.Tensor:
     """torch.repeat_interleave(x, dim=2, repeats=n_rep)"""
     assert dim == 2, "Only dim=2 is supported. Check the implementation for other dims."

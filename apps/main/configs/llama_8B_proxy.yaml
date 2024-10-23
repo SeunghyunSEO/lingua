@@ -1,31 +1,31 @@
 #python -m lingua.stool config=apps/main/configs/llama2_7B.yaml nodes=32 account=fair_amaia_cw_codegen qos=lowest
 dump_dir: ${oc.env:DUMP_DIR}
-name: "8b_mup_proxy"
-steps: 50000
-grad_acc_steps: 1
-probe_freq: 100
+name: ${oc.env:WANDB_EXP_NAME}
+steps: ${oc.env:STEPS}
+grad_acc_steps: ${oc.env:ACCUM}
 
 seed: 777
 
 ########################################
 
 distributed:
-  fsdp_type: full_shard
-  compile: true
+  fsdp_type: ${oc.env:FSDP_TYPE}
   model_dtype: bf16
   matmul_allow_tf32: false
   selective_activation_checkpointing: false
+  compile: ${oc.env:COMPILE}
 
-  # dp_replicate: 1
-  # dp_shard: 1
-  tp_size: 1
+  dp_replicate: ${oc.env:DP_DEGREE}
+  dp_shard: ${oc.env:DP_SHARD_DEGREE}
+  tp_size: ${oc.env:TP_DEGREE}
 
-profiling:
-  run: true
-  mem_warmup: 0
-  mem_steps: 4
-  profile_warmup: 100
-  profile_steps: 4
+# probe_freq: 100
+# profiling:
+#   run: true
+#   mem_warmup: 0
+#   mem_steps: 4
+#   profile_warmup: 100
+#   profile_steps: 4
 
 checkpoint:
   dump:
@@ -36,10 +36,10 @@ checkpoint:
     keep: 3
 
 logging:
-  freq: 5
+  freq: 20
   wandb: 
     project: ${oc.env:WANDB_PROJECT_NAME}
-    name: ${oc.env:WANDB_EXP_NAME}
+    # name: ${oc.env:WANDB_EXP_NAME}
 
 ########################################
 
@@ -50,7 +50,7 @@ data:
     # dclm_baseline_1.0: 1.0
     # fineweb_edu_10bt: 1.0
     fineweb_edu_10bt_shuffled: 1.0
-  batch_size: 4
+  batch_size: ${oc.env:BSZ}
   prefetch_size: 1024
   seq_len: 4096
   n_views: 2
@@ -65,7 +65,7 @@ model:
   dim: 512
   head_dim: 128
   n_heads: 4
-  n_kv_heads: 1
+  n_kv_heads: 4
   ffn_dim_multiplier: 1.3
   multiple_of: 256
   rope_theta: 100_000
@@ -77,7 +77,7 @@ model:
   base_dim: 512
   base_head_dim: 128
   base_n_heads: 4
-  base_n_kv_heads: 1
+  base_n_kv_heads: 4
   base_ffn_dim_multiplier: 1.3
   base_multiple_of: 256
   input_mult: 10.0
@@ -86,9 +86,12 @@ model:
 
   fused_rms_norm: true
 
+  qk_norm: ${oc.env:QK_NORM}
+  residual_post_norm: ${oc.env:RES_POST_NORM}
+
 optim:
   lr: ${oc.env:LR}
   weight_decay: 0.1
-  warmup: 2000
-  lr_min_ratio: ${oc.env:MIN_LR}
+  warmup: ${oc.env:WARMUP}
+  lr_min_ratio: 0.1
   clip: 1.0

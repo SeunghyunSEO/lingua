@@ -68,11 +68,24 @@ class BaseTransformerArgs:
     fused_rms_norm: bool = False
     fused_ce: bool = False
 
+    ########################################
+    qk_norm: bool = False
+    residual_post_norm: bool = False
+
 
 def cross_entropy(pred, target, **kwargs):
-    return F.nll_loss(
-        F.log_softmax(pred.flatten(end_dim=-2).float(), -1),
-        target.flatten(end_dim=-1),
+    '''
+    there is a bug to use loss parallel
+    https://github.com/pytorch/torchtitan/blob/1060feacc1b51cb6b339a04e53a5243b8466552b/train.py#L133
+    '''
+    # return F.nll_loss(
+    #     F.log_softmax(pred.flatten(end_dim=-2).float(), -1),
+    #     target.flatten(end_dim=-1),
+    #     **kwargs,
+    # )
+    return torch.nn.functional.cross_entropy(
+        pred.flatten(0, 1).float(), 
+        target.flatten(0, 1),
         **kwargs,
     )
 
@@ -356,6 +369,11 @@ class Attention(nn.Module):
             bias=False,
         )
 
+        if args.qk_norm:
+            norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
+            self.q_norm = norm(args.dim, eps=args.norm_eps)
+            self.k_norm = norm(args.dim, eps=args.norm_eps)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -369,6 +387,18 @@ class Attention(nn.Module):
         xq = self.wq(x.view_as(x))
         xk = self.wk(x.view_as(x))
         xv = self.wv(x.view_as(x))
+
+        ## check TP
+        # print(f'''
+        # bsz, seq_len, dim: {bsz, seq_len, dim}
+        # xq.size(): {xq.size()}
+        # xk.size(): {xk.size()}
+        # xv.size(): {xv.size()}
+        # ''')
+
+        if self.args.qk_norm:
+            xq = self.q_norm(xq)
+            xk = self.q_norm(xk)
 
         output_shape = xq.shape
         # B S D -> B S H D
@@ -524,11 +554,17 @@ class FeedForward(nn.Module):
             bias=False,
         )
 
+        if args.residual_post_norm:
+            norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
+            self.fc2_norm = norm(args.dim, eps=args.norm_eps)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # B S D
         x1 = self.w1(x.view_as(x))
         x3 = self.w3(x.view_as(x))
         output = self.w2(F.silu(x1) * x3)
+        if self.args.residual_post_norm:
+            output = self.fc2_norm(output)
         return output
 
     def reset_parameters(self, init_std=None, factor=1.0):

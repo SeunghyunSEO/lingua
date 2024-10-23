@@ -196,61 +196,114 @@ def build_fsdp_grouping_plan(model_args: LMTransformerArgs):
     return group_plan
 
 
+'''
+it should be same as torchtitan
+https://github.com/pytorch/torchtitan/blob/main/torchtitan/parallelisms/parallelize_llama.py
+'''
 # Optional and only used for model/tensor parallelism when tp_size > 1
-def tp_parallelize(model, tp_mesh, model_args: LMTransformerArgs, distributed_args):
+def tp_parallelize(model, tp_mesh, model_args: LMTransformerArgs, distributed_args, enable_float8=False):
     assert model_args.dim % distributed_args.tp_size == 0
     assert model_args.vocab_size % distributed_args.tp_size == 0
     assert model_args.n_heads % distributed_args.tp_size == 0
     assert (model_args.n_kv_heads or 0) % distributed_args.tp_size == 0
     assert model_args.n_heads % (model_args.n_kv_heads or 1) == 0
 
-    # Embedding layer tp
-    main_plan = {}
-    main_plan["tok_embeddings"] = ColwiseParallel(
-        input_layouts=Replicate(), output_layouts=Shard(1)
-    )
-    main_plan["norm"] = SequenceParallel()
-    main_plan["output"] = ColwiseParallel(
-        input_layouts=Shard(1), output_layouts=Replicate()
-    )
+    """Apply tensor parallelism."""
+    # 1. Parallelize the embedding and shard its outputs (which are the first
+    # transformer block's inputs)
+    # 2. Parallelize the root norm layer over the sequence dim
+    # 3. Parallelize the final linear output layer
 
     parallelize_module(
         model,
         tp_mesh,
-        main_plan,
+        {
+            "tok_embeddings": RowwiseParallel(
+                input_layouts=Replicate(),
+                output_layouts=Shard(1),
+            ),
+            "norm": SequenceParallel(),
+            "output": ColwiseParallel(
+                input_layouts=Shard(1),
+                output_layouts=Shard(-1) if distributed_args.loss_parallel else Replicate(),
+                use_local_output=not distributed_args.loss_parallel,
+            ),
+        },
     )
 
-    # Attention layers tp
+    # Parallel styles used for transformer block linear weights and their
+    # inputs may be different for float8 linears
+    if enable_float8:
+        # TODO(vkuzo): once float8 configuration supports delayed scaling,
+        # add a check here to enforce supported float8 all-gather configurations
+        # TODO(vkuzo): add the items below to __init__.py of torchao.float8 and import from there
+        from torchao.float8.float8_tensor_parallel import (
+            Float8ColwiseParallel,
+            Float8RowwiseParallel,
+            PrepareFloat8ModuleInput,
+        )
+
+        rowwise_parallel, colwise_parallel, prepare_module_input = (
+            Float8RowwiseParallel,
+            Float8ColwiseParallel,
+            PrepareFloat8ModuleInput,
+        )
+    else:
+        rowwise_parallel, colwise_parallel, prepare_module_input = (
+            RowwiseParallel,
+            ColwiseParallel,
+            PrepareModuleInput,
+        )
+
+    # Apply tensor + sequence parallelism to every transformer block
+    # NOTE: At the cost of model code change, we can accelerate Sequence Parallel
+    #       by folding (and unfolding) the batch dimension and the sequence dimension.
+    #       Examples can be found at https://github.com/pytorch/torchtitan/pull/437
     for layer in model.layers:
-        layer_plan = {}
-
-        layer_plan["attention"] = PrepareModuleInput(
-            input_layouts=(Shard(1), None),
-            desired_input_layouts=(Replicate(), None),
-        )
-        layer_plan["attention_norm"] = SequenceParallel()
-        layer_plan["attention.wq"] = ColwiseParallel()
-        layer_plan["attention.wk"] = ColwiseParallel()
-        layer_plan["attention.wv"] = ColwiseParallel()
-        layer_plan["attention.wo"] = RowwiseParallel(output_layouts=Shard(1))
-
-        # Feedforward layers tp
-        layer_plan["feed_forward"] = PrepareModuleInput(
-            input_layouts=(Shard(1),),
-            desired_input_layouts=(Replicate(),),
-        )
-        layer_plan["ffn_norm"] = SequenceParallel()
-        layer_plan["feed_forward.w1"] = ColwiseParallel()
-        layer_plan["feed_forward.w3"] = ColwiseParallel()
-        layer_plan["feed_forward.w2"] = RowwiseParallel(output_layouts=Shard(1))
+        layer_plan = {
+            "attention_norm": SequenceParallel(),
+            "attention": prepare_module_input(
+                input_layouts=(Shard(1), None),
+                desired_input_layouts=(Replicate(), None),
+            ),
+            "attention.wq": colwise_parallel(),
+            "attention.wk": colwise_parallel(),
+            "attention.wv": colwise_parallel(),
+            "attention.wo": rowwise_parallel(output_layouts=Shard(1)),
+            "ffn_norm": SequenceParallel(),
+            "feed_forward": prepare_module_input(
+                input_layouts=(Shard(1),),
+                desired_input_layouts=(Replicate(),),
+            ),
+            "feed_forward.w1": colwise_parallel(),
+            "feed_forward.w2": rowwise_parallel(output_layouts=Shard(1)),
+            "feed_forward.w3": colwise_parallel(),
+        }
+        
+        # should be splitted across time dimension like other norms
+        if model_args.qk_norm:
+            layer_plan["attention.q_norm"]: SequenceParallel()
+            layer_plan["attention.k_norm"]: SequenceParallel()
+        if model_args.residual_post_norm:
+            layer_plan["feed_forward.fc2_norm"]: SequenceParallel()
 
         parallelize_module(
-            layer,
-            tp_mesh,
-            layer_plan,
+            module=layer,
+            device_mesh=tp_mesh,
+            parallelize_plan=layer_plan,
         )
 
         # Adjusting the number of heads and kv heads according to the tp size
         attn_layer = layer.attention
         attn_layer.n_heads = attn_layer.n_heads // distributed_args.tp_size
         attn_layer.n_kv_heads = attn_layer.n_kv_heads // distributed_args.tp_size
+
+    if distributed_args.enable_async_tp:
+        from torch.distributed._symmetric_memory import enable_symm_mem_for_group
+        torch._inductor.config._micro_pipeline_tp = True
+        enable_symm_mem_for_group(tp_mesh.get_group().group_name)
+
+    print(
+        f"Applied {'Float8 ' if enable_float8 else ''}{'Async ' if distributed_args.enable_async_tp else ''}"
+        "Tensor Parallelism to the model"
+    )

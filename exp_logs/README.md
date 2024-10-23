@@ -4,7 +4,8 @@
 
 - [x] test run
 - [x] mup
-- [ ] fused kernel patch
+- [x] fused kernel patch
+    - TBD) fused ce dtensor issue
 - [ ] logger
     - [ ] activation norm 
     - [ ] grad norm
@@ -47,7 +48,6 @@ wandb login
 ```
 
 ```bash
-export LOCAL_RANK=0 &&\
 export WORLD_SIZE=2 &&\
 export MASTER_ADDR=node0 &&\
 export MASTER_PORT=23458
@@ -120,20 +120,64 @@ node0:23440:23664 [0] NCCL INFO ncclCommInitRank comm 0x563d5b2b3360 rank 0 nran
 ## mup
 
 ```bash
-export LOCAL_RANK=0 &&\
-export WORLD_SIZE=2 &&\
-export MASTER_ADDR=node0 &&\
+export WORLD_SIZE=2
+export MASTER_ADDR=node0
 export MASTER_PORT=23458
 
-export WANDB_PROJECT_NAME='lingua'
-export WANDB_EXP_NAME='llama_8b_mup_proxy'
-export DUMP_DIR="exp_logs/assets/logs/test_${CONFIG}_world_${WORLD_SIZE}_mup"
+# export COMPILE=true
+# export DP_DEGREE=8
+# export DP_SHARD_DEGREE=1
+# export TP_DEGREE=1
+# export FSDP_TYPE=full_shard
+
+# export COMPILE=true
+# export DP_DEGREE=1
+# export DP_SHARD_DEGREE=8
+# export TP_DEGREE=1
+# export FSDP_TYPE=full_shard
+
+export COMPILE=false
+export DP_DEGREE=1
+export DP_SHARD_DEGREE=1
+export TP_DEGREE=2
+export FSDP_TYPE=full_shard
+
+export QK_NORM=false
+export RES_POST_NORM=false
+
+export STEPS=20000
+export WARMUP=1000
+export BSZ=2
+export ACCUM=1
 
 export CONFIG=llama_8B_proxy
-export LR=0.001
-export MIN_LR=0.0001
 
-torchrun --nproc-per-node $WORLD_SIZE \
--m apps.main.train \
-config=apps/main/configs/${CONFIG}.yaml
+LRS=(0.00195)
+# LRS=( # low resolution sweep / 2^-13 ~ 2^-4
+#         0.000122 0.00024 0.00049
+#         0.00098 0.00195
+#         0.00391 0.00781
+#         0.01562 0.03125 0.0625
+# )
+# LRS=( # high resolution sweep / 2^-13 ~ 2^-4
+#         0.000122 0.00024 0.00049
+#         0.00098 0.00138 0.00195 0.00276
+#         0.00391 0.00552 0.00781 0.01105
+#         0.01562 0.03125 0.0625
+# )
+export WANDB_PROJECT_NAME="lingua"
+
+for LR in "${LRS[@]}"; do
+    export LR=$LR
+    WANDB_EXP_NAME="mup_proxy_world_${WORLD_SIZE}_DP_${DP_DEGREE}_SHARD_${DP_SHARD_DEGREE}_TP_${TP_DEGREE}_fsdp_${FSDP_TYPE}_compile_${COMPILE}"
+    WANDB_EXP_NAME="${WANDB_EXP_NAME}_step_${STEPS}_warmup_${WARMUP}_bsz_${BSZ}_accum_${ACCUM}"
+    WANDB_EXP_NAME="${WANDB_EXP_NAME}_lr_${LR}"
+    WANDB_EXP_NAME="${WANDB_EXP_NAME}_qknorm_${QK_NORM}_resnorm_${RES_POST_NORM}"
+    export WANDB_EXP_NAME=$WANDB_EXP_NAME
+    export DUMP_DIR="exp_logs/assets/logs/${WANDB_EXP_NAME}"
+    torchrun --nproc-per-node $WORLD_SIZE \
+    -m apps.main.train \
+    config=apps/main/configs/${CONFIG}.yaml
+done
 ```
+

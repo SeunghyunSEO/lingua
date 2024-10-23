@@ -5,11 +5,20 @@ from functools import partial
 import math
 
 import logging
+import torch
 from torch import nn
 from torch.optim import AdamW, lr_scheduler
 
 logger = logging.getLogger()
 
+
+# https://github.com/allenai/OLMo/blob/main/olmo/train.py#L115
+@dataclass
+class LRMonitor:
+    optim: torch.optim.Optimizer
+    def check(self):
+        lrs = [group["lr"] for group in self.optim.param_groups]
+        return {f"lr_group{idx}": lr for idx, lr in enumerate(lrs)}
 
 @dataclass
 class OptimArgs:

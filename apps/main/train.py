@@ -53,7 +53,7 @@ from lingua.metrics import (
     MetricLogger,
     get_num_params,
 )
-from lingua.optim import OptimArgs, build_optimizer
+from lingua.optim import OptimArgs, build_optimizer, LRMonitor
 from lingua.profiling import ProfilerArgs, maybe_run_profiler
 from lingua.tokenizer import build_tokenizer
 from apps.main.transformer import (
@@ -246,6 +246,7 @@ def train(args: TrainArgs):
         logger.info(f"Running on dp rank : {dp_rank}")
         logger.info(f"Running on dp size : {dp_degree}")
         logger.info(f"args.distributed: {args.distributed}")
+        logger.info(f"args: {args}")
 
         torch.manual_seed(args.seed)
         logger.info(f"Building model")
@@ -296,6 +297,8 @@ def train(args: TrainArgs):
 
         # build optimizer after apply parallelisms to the model
         optimizer, scheduler = build_optimizer(model, args.optim, args.steps, args.model)
+        # lr_monitor = LRMonitor(optimizer)
+
         data_loader_state = init_dataloader_state_from_args(
             args.data, dp_rank, dp_degree
         )
@@ -340,6 +343,9 @@ def train(args: TrainArgs):
         torch_profiler = context_stack.enter_context(
             maybe_run_profiler(args.dump_dir, model, args.profiling)
         )
+        if args.distributed.tp_size > 1 and args.distributed.loss_parallel:
+            logger.info(f'loss parallel is activated')
+            context_stack.enter_context(torch.distributed.tensor.parallel.loss_parallel())
 
         nwords_since_last_log = 0
         time_last_log = timer()
@@ -368,6 +374,7 @@ def train(args: TrainArgs):
             labels = batch[:, :, 1].cuda()
             data_load_time = round(timer() - data_load_start, 4)
             nwords_since_last_log += input_ids.numel()
+            # print(f'(rank:{torch.distributed.get_rank()})input_ids.numel(): {input_ids.numel()}')
 
             bsz, seqlen = labels.shape
 
@@ -421,6 +428,8 @@ def train(args: TrainArgs):
             loss.backward()
             # For logging we undo that scaling
             loss = loss.detach() * args.grad_acc_steps
+
+            #Q. why we dont all reduce loss for logging? -> A. see dist_mean_dict
 
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(), max_norm=args.optim.clip, foreach=True

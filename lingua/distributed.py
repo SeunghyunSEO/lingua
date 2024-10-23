@@ -60,6 +60,10 @@ class DistributedArgs:
         1  # How many times to replicate the model weight. Typically number of nodes.
     )
     tp_size: int = 1
+    # loss_parallel: bool = True
+    loss_parallel: bool = False
+    enable_async_tp: bool = False
+
     selective_activation_checkpointing: bool = False
     compile: bool = False
     fsdp_type: str = "no_shard"
@@ -475,6 +479,12 @@ def parallelize_model(
         torch._dynamo.config.cache_size_limit = (
             distributed_args.compile_cache_size_limit
         )
+        # if model_args.fused_rms_norm == "fused_rmsnorm":
+        #     # https://github.com/pytorch/torchtitan/blob/main/torchtitan/parallelisms/parallelize_llama.py#L68-L74
+        #     raise NotImplementedError(
+        #         "fused_rmsnorm is not compatible with torch.compile yet. "
+        #         "Please use rmsnorm or layernorm."
+        #     )
         model = torch.compile(model)
 
     return model

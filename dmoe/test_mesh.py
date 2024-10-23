@@ -44,8 +44,8 @@ Tra = MultiprocessingPdb().set_trace
 
 USE_TORCH_PROFILER = True
 TORCH_PROFILER_LOG_DIR = './assets/torch_profiler_logs'
-# USE_LOSS_PARALLEL = True
-USE_LOSS_PARALLEL = False
+USE_LOSS_PARALLEL = True
+# USE_LOSS_PARALLEL = False
 
 
 def test_mesh():
@@ -115,6 +115,28 @@ def test_mesh():
     ################################################################################
     ## apply tensor parallel first
     if TP != 1:
+
+        ################################################################################
+        ## apply word embedding and loss parallel
+        tp_plan = {
+            "model.wte": RowwiseParallel(
+                input_layouts=Replicate(),
+                output_layouts=Shard(1),
+            ),
+            "model.ln": SequenceParallel(),
+            "lm_head": ColwiseParallel(
+                input_layouts=Shard(1), # time dimension
+                output_layouts=Shard(-1) if USE_LOSS_PARALLEL else Replicate(),
+                use_local_output=not USE_LOSS_PARALLEL,
+            ),
+        }
+        parallelize_module(
+            model, 
+            tp_mesh,
+            tp_plan
+        )
+
+        ################################################################################
         for layer_id, residual_block in enumerate(model.model.h):
             layer_tp_plan = {
                 # Now the input and output of SequenceParallel has Shard(1) layouts,
@@ -149,35 +171,14 @@ def test_mesh():
             )
 
         ################################################################################
-        ## apply word embedding and loss parallel
-        tp_plan = {
-            "model.wte": RowwiseParallel(
-                input_layouts=Replicate(),
-                output_layouts=Shard(1),
-            ),
-            "model.ln": SequenceParallel(),
-            "lm_head": ColwiseParallel(
-                input_layouts=Shard(1), # time dimension
-                output_layouts=Shard(-1) if USE_LOSS_PARALLEL else Replicate(),
-                use_local_output=not USE_LOSS_PARALLEL,
-            ),
-        }
-        parallelize_module(
-            model, 
-            tp_mesh,
-            tp_plan
-        )
-
-        ################################################################################
         ## async TP
         enable_async_tp = False
         if enable_async_tp:
             from torch.distributed._symmetric_memory import enable_symm_mem_for_group
             torch._inductor.config._micro_pipeline_tp = True
             enable_symm_mem_for_group(tp_mesh.get_group().group_name)
-    else:
-        use_loss_parallel = False
-
+    use_loss_parallel_ = USE_LOSS_PARALLEL and (TP != 1)
+    print(f'use_loss_parallel_: {use_loss_parallel_}')
 
     ################################################################################
     ## apply FSDP
@@ -222,7 +223,6 @@ def test_mesh():
     if USE_TORCH_PROFILER:
         num_wait_steps, num_warmup_steps, num_active_steps, num_repeat = 1, 2, 3, 1
         num_iter = int((num_wait_steps + num_warmup_steps + num_active_steps)*num_repeat)
-        use_loss_parallel_ = USE_LOSS_PARALLEL and (TP != 1)
         context = [
             get_torch_profiler(
                 num_wait_steps=num_wait_steps,
@@ -253,7 +253,7 @@ def test_mesh():
 
             # forward
             pred = model(x)
-            if USE_LOSS_PARALLEL:
+            if use_loss_parallel_:
                 with loss_parallel():
                     # assuming pred and labels are of the shape [batch, seq, vocab]
                     loss = F.cross_entropy(pred[..., :-1, :].flatten(0, 1), labels.flatten(0, 1))

@@ -34,8 +34,7 @@ data:
     n_views: 2
     load_async: true
     tokenizer:
-        name: sp
-        path: tokenizers/tokenizer_final_32k.minus_inf_ws.model
+        name: bytes
 
 profiling:
     run: true

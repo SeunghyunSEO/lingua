@@ -39,8 +39,8 @@ from torch_profiler_utils import (
 )
 
 # from pdb import set_trace as Tra
-from multiprocessing_pdb import MultiprocessingPdb
-Tra = MultiprocessingPdb().set_trace
+# from multiprocessing_pdb import MultiprocessingPdb
+# Tra = MultiprocessingPdb().set_trace
 
 USE_TORCH_PROFILER = True
 TORCH_PROFILER_LOG_DIR = './assets/torch_profiler_logs'

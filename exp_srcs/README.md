@@ -2,31 +2,6 @@
 
 ## dist pdb tracer for debugging
 
-- Installation
-
-```bash
-python -m pip install --upgrade pip
-
-# megablocks
-pip install megablocks==0.6.1
-
-# TE
-git clone https://github.com/NVIDIA/TransformerEngine
-cd TransformerEngine
-git checkout release_v1.7
-git submodule update --init --recursive
-export NVTE_FRAMEWORK=pytorch 
-pip install .
-cd ..
-```
-
-```bash
-cd /path/to/dir/multiprocessing_pdb &&\
-pip install -e .
-```
-
-- Usage
-
 ```python
 from multiprocessing_pdb import MultiprocessingPdb
 Tra = MultiprocessingPdb().set_trace
@@ -76,7 +51,7 @@ rank: 1, world size: 2
 ```
 
 
-## run scripts for torch native parallelism
+## 3d parallelism test
 
 ### FSDP
 
@@ -146,7 +121,7 @@ test_mesh.py
 ![DP_1_SHARD_1_TP_2_USE_LOSS_PARALLEL_True](./assets/images/DP_1_SHARD_2_TP_1_USE_LOSS_PARALLEL_False.png)
 
 
-### just DP
+### DP only
 
 ```bash
 export DP=2 &&\
@@ -211,7 +186,7 @@ test_mesh.py
 ![DP_1_SHARD_1_TP_2_USE_LOSS_PARALLEL_True](./assets/images/DP_2_SHARD_1_TP_1_USE_LOSS_PARALLEL_False.png)
 
 
-### TP
+### TP only
 
 ```bash
 export DP=1 &&\
@@ -288,6 +263,70 @@ test_mesh.py
 ![DP_1_SHARD_1_TP_2_USE_LOSS_PARALLEL_True](./assets/images/DP_1_SHARD_1_TP_2_USE_LOSS_PARALLEL_False.png)
 
 
+### 2d parallel in 8 gpus
+
+```bash
+export WORLD_SIZE=8 &&\
+export MASTER_ADDR=node0 &&\
+export MASTER_PORT=23459
+export DP=2 &&\
+export SHARD=2 &&\
+export TP=2
+torchrun --nproc_per_node=$WORLD_SIZE --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT \
+test_mesh.py
+```
+
+```python
+rank: 0, world_rank: 0, world size: 8, device: cuda:0
+rank: 6, world_rank: 6, world size: 8, device: cuda:6
+rank: 5, world_rank: 5, world size: 8, device: cuda:5
+rank: 4, world_rank: 4, world size: 8, device: cuda:4
+rank: 2, world_rank: 2, world size: 8, device: cuda:2
+rank: 3, world_rank: 3, world size: 8, device: cuda:3
+rank: 7, world_rank: 7, world size: 8, device: cuda:7
+rank: 1, world_rank: 1, world size: 8, device: cuda:1   
+
+    mesh_3d: DeviceMesh('cuda', [[[0, 1], [2, 3]], [[4, 5], [6, 7]]], mesh_dim_names=('replicate', 'shard', 'tp'))
+    fsdp_mesh: DeviceMesh('cuda', [[0, 2], [4, 6]], mesh_dim_names=('replicate', 'shard'))
+    tp_mesh: DeviceMesh('cuda', [0, 1], mesh_dim_names=('tp',))
+    replicate_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f047c3142f0>
+    shard_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f047c3149b0>
+    tp_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f047c314bb0>
+
+    model: FullyShardedDataParallel(
+  (_fsdp_wrapped_module): Transformer(
+    (model): ModuleDict(
+      (wte): Embedding(50257, 1024)
+      (h): ModuleList(
+        (0-3): 4 x ResidualBlock(
+          (ln1): LayerNorm()
+          (attn): Attention(
+            (q_proj): Linear(in_features=1024, out_features=1024, bias=False)
+            (k_proj): Linear(in_features=1024, out_features=1024, bias=False)
+            (v_proj): Linear(in_features=1024, out_features=1024, bias=False)
+            (o_proj): Linear(in_features=1024, out_features=1024, bias=False)
+          )
+          (ln2): LayerNorm()
+          (mlp): MLP(
+            (ffn1): Linear(in_features=1024, out_features=4096, bias=False)
+            (act): GELU(approximate='none')
+            (ffn2): Linear(in_features=4096, out_features=1024, bias=False)
+          )
+        )
+      )
+      (ln): LayerNorm()
+    )
+    (lm_head): Linear(in_features=1024, out_features=50257, bias=False)
+  )
+)
+
+0th step loss: DTensor(local_tensor=11.174638748168945, device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('tp',)), placements=(Replicate(),))
+1th step loss: DTensor(local_tensor=0.5185606479644775, device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('tp',)), placements=(Replicate(),))
+2th step loss: DTensor(local_tensor=16.62112808227539, device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('tp',)), placements=(Replicate(),))
+3th step loss: DTensor(local_tensor=15.390058517456055, device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('tp',)), placements=(Replicate(),))
+4th step loss: DTensor(local_tensor=11.48178482055664, device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('tp',)), placements=(Replicate(),))
+5th step loss: DTensor(local_tensor=9.973380088806152, device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('tp',)), placements=(Replicate(),))
+```
 
 # MoE
 
@@ -321,6 +360,29 @@ test_mesh.py
     - [mixtral inference example](https://github.com/NVIDIA/Megatron-LM/tree/main/examples/mixtral)
 
 
+## install core dependencies
+
+```bash
+python -m pip install --upgrade pip
+
+# megablocks
+pip install megablocks==0.6.1
+
+# TE
+git clone https://github.com/NVIDIA/TransformerEngine
+cd TransformerEngine
+git checkout release_v1.7
+git submodule update --init --recursive
+export NVTE_FRAMEWORK=pytorch 
+pip install .
+cd ..
+```
+
+```bash
+cd /path/to/dir/multiprocessing_pdb &&\
+pip install -e .
+```
+
 ## run scripts for dmoe test (WIP)
 
 ```bash
@@ -335,6 +397,7 @@ test_dmoe.py
 ```python
 
 ```
+
 
 # shampoo
 

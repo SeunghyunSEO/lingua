@@ -15,10 +15,12 @@ def set_seed(seed=1234):
 
 def init_dist(backend="nccl"):
     rank = int(os.environ["LOCAL_RANK"])
+    world_rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
-    dist.init_process_group(backend=backend, init_method="env://", rank=rank, world_size=world_size)
-    print(f"rank: {rank}, world size: {world_size}")
-    return rank, world_size
+    dist.init_process_group(backend=backend, init_method="env://", rank=world_rank, world_size=world_size)
+    device = torch.device("cuda:{}".format(rank))
+    print(f"rank: {rank}, world_rank: {world_rank}, world size: {world_size}, device: {device}")
+    return rank, world_rank, world_size, device
 
 def cleanup_distributed():
     dist.destroy_process_group()
@@ -33,3 +35,7 @@ def _get_torch_dtype(fp16: bool, bf16: bool) -> Optional[torch.dtype]:
     elif bf16:
         return torch.bfloat16
     return None
+
+if __name__ == "__main__":
+    init_dist()
+    cleanup_distributed()

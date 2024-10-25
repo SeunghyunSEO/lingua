@@ -52,8 +52,7 @@ def test_mesh():
     ################################################################################
     ## init dist setting and model
 
-    rank, world_size = init_dist()
-    device = f"cuda:{rank}"
+    rank, world_rank, world_size, device = init_dist()
     set_seed()
 
     tokenizer = AutoTokenizer.from_pretrained('gpt2')

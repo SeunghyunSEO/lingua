@@ -1,35 +1,4 @@
-
-## References
-
-- dmoe
-    - megablocks
-        - [moe.py](https://github.com/databricks/megablocks/blob/main/megablocks/layers/moe.py)
-        - [dmoe.py](https://github.com/databricks/megablocks/blob/main/megablocks/layers/lingua/dmoe.py#L18)
-    - llm foundry
-        - [layers/ffn.py](https://github.com/mosaicml/llm-foundry/blob/e6e74a24db234a74010f64f72cbd15bfa4ffda1c/llmfoundry/models/layers/ffn.py#L470-L509)
-        - [test_dmoe.py](https://github.com/mosaicml/llm-foundry/blob/e6e74a24db234a74010f64f72cbd15bfa4ffda1c/tests/models/layers/test_dmoe.py#L71)
-        - [moe init](https://github.com/mosaicml/llm-foundry/blob/e6e74a24db234a74010f64f72cbd15bfa4ffda1c/llmfoundry/models/utils/param_init_fns.py#L341-L404)
-    - olmo
-        - [olmoe](https://github.com/allenai/OLMo/blob/sewon-olmoe/olmo/model.py#L680-L690)
-        - [parallelism](https://github.com/allenai/OLMo/blob/sewon-olmoe/scripts/train.py#L188-L225)
-        - [profiler](https://github.com/allenai/OLMo/blob/sewon-olmoe/olmo/train.py#L1225-L1262)
-
-    - megatron integration
-        - [megatron PR 1](https://github.com/NVIDIA/Megatron-LM/pull/287)
-        - [megatron PR 2](https://github.com/NVIDIA/Megatron-LM/pull/288)
-        - [stanford-futuredata/Megatron-LM](https://github.com/stanford-futuredata/Megatron-LM/tree/3a9e3d8de308e6f6398b59d16a8bd7177374f121)
-
-- torch native trainer references
-    - [pytorch/torchtune](https://github.com/pytorch/torchtune)
-    - [pytorch/torchtitan](https://github.com/pytorch/torchtitan)
-        - [memory_profiler](https://github.com/pytorch/torchtitan/blob/main/docs/memory_profiler.md)
-
-- megatron naive moe
-    - [Megatron-LM/megatron/core/transformer/moe](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core/transformer/moe)
-    - [Megatron-LM/docs/llama_mistral.md](https://github.com/NVIDIA/Megatron-LM/blob/main/docs/llama_mistral.md)
-    - [Megatron-LM/examples/export/ptq_and_trtllm_export](https://github.com/NVIDIA/Megatron-LM/tree/772faca1f8d5030621b738cbd8e8bb2d8d28f6e6/examples/export/ptq_and_trtllm_export)
-    - [mixtral inference example](https://github.com/NVIDIA/Megatron-LM/tree/main/examples/mixtral)
-
+# torch native parallelism
 
 ## dist pdb tracer for debugging
 
@@ -66,15 +35,24 @@ def dummy_code_block(...):
     Tra()
 ```
 
+## make sure your dist setting is correct
+
+```bash
+export WORLD_SIZE=2 &&\
+export MASTER_ADDR=node0 &&\
+export MASTER_PORT=23459
+torchrun --nproc_per_node=$WORLD_SIZE --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT \
+utils.py
+```
+
 
 ## run scripts for torch/nccl all to all comm
 
 ```bash
-# cd /path/to/dir/lingua/dmoe
-export LOCAL_RANK=0 &&\
+# cd /path/to/dir/lingua/exp_srcs
 export WORLD_SIZE=2 &&\
 export MASTER_ADDR=node0 &&\
-export MASTER_PORT=23458 &&\
+export MASTER_PORT=23459 &&\
 torchrun --nproc_per_node=$WORLD_SIZE --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT \
 test_all_to_all.py
 ```
@@ -103,14 +81,13 @@ rank: 1, world size: 2
 ### FSDP
 
 ```bash
-export LOCAL_RANK=0 &&\
 export WORLD_SIZE=2 &&\
 export MASTER_ADDR=node0 &&\
-export MASTER_PORT=23458
+export MASTER_PORT=23459
 ```
 
 ```bash
-# cd /path/to/dir/lingua/dmoe
+# cd /path/to/dir/lingua/exp_srcs
 export DP=1 &&\
 export SHARD=2 &&\
 export TP=1
@@ -311,16 +288,150 @@ test_mesh.py
 ![DP_1_SHARD_1_TP_2_USE_LOSS_PARALLEL_True](./assets/images/DP_1_SHARD_1_TP_2_USE_LOSS_PARALLEL_False.png)
 
 
+
+# MoE
+
+- dmoe
+    - megablocks
+        - [moe.py](https://github.com/databricks/megablocks/blob/main/megablocks/layers/moe.py)
+        - [dmoe.py](https://github.com/databricks/megablocks/blob/main/megablocks/layers/lingua/dmoe.py#L18)
+    - llm foundry
+        - [layers/ffn.py](https://github.com/mosaicml/llm-foundry/blob/e6e74a24db234a74010f64f72cbd15bfa4ffda1c/llmfoundry/models/layers/ffn.py#L470-L509)
+        - [test_dmoe.py](https://github.com/mosaicml/llm-foundry/blob/e6e74a24db234a74010f64f72cbd15bfa4ffda1c/tests/models/layers/test_dmoe.py#L71)
+        - [moe init](https://github.com/mosaicml/llm-foundry/blob/e6e74a24db234a74010f64f72cbd15bfa4ffda1c/llmfoundry/models/utils/param_init_fns.py#L341-L404)
+    - olmo
+        - [olmoe](https://github.com/allenai/OLMo/blob/sewon-olmoe/olmo/model.py#L680-L690)
+        - [parallelism](https://github.com/allenai/OLMo/blob/sewon-olmoe/scripts/train.py#L188-L225)
+        - [profiler](https://github.com/allenai/OLMo/blob/sewon-olmoe/olmo/train.py#L1225-L1262)
+
+    - megatron integration
+        - [megatron PR 1](https://github.com/NVIDIA/Megatron-LM/pull/287)
+        - [megatron PR 2](https://github.com/NVIDIA/Megatron-LM/pull/288)
+        - [stanford-futuredata/Megatron-LM](https://github.com/stanford-futuredata/Megatron-LM/tree/3a9e3d8de308e6f6398b59d16a8bd7177374f121)
+
+- torch native trainer references
+    - [pytorch/torchtune](https://github.com/pytorch/torchtune)
+    - [pytorch/torchtitan](https://github.com/pytorch/torchtitan)
+        - [memory_profiler](https://github.com/pytorch/torchtitan/blob/main/docs/memory_profiler.md)
+
+- megatron naive moe
+    - [Megatron-LM/megatron/core/transformer/moe](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core/transformer/moe)
+    - [Megatron-LM/docs/llama_mistral.md](https://github.com/NVIDIA/Megatron-LM/blob/main/docs/llama_mistral.md)
+    - [Megatron-LM/examples/export/ptq_and_trtllm_export](https://github.com/NVIDIA/Megatron-LM/tree/772faca1f8d5030621b738cbd8e8bb2d8d28f6e6/examples/export/ptq_and_trtllm_export)
+    - [mixtral inference example](https://github.com/NVIDIA/Megatron-LM/tree/main/examples/mixtral)
+
+
 ## run scripts for dmoe test (WIP)
 
 ```bash
-# cd /path/to/dir/lingua/dmoe
-export LOCAL_RANK=0 &&\
+# cd /path/to/dir/lingua/exp_srcs
 export WORLD_SIZE=2 &&\
 export MASTER_ADDR=node0 &&\
-export MASTER_PORT=23458 &&\
+export MASTER_PORT=23459 &&\
 torchrun --nproc_per_node=$WORLD_SIZE --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT \
 test_dmoe.py
 ```
 
-there is a bug
+```python
+
+```
+
+# shampoo
+
+```bash
+git clone https://github.com/facebookresearch/optimizers
+cd optimizers && pip install -e . && cd ..
+python -c "from distributed_shampoo.distributed_shampoo import DistributedShampoo;
+shampoo_optimizer = DistributedShampoo;
+print(shampoo_optimizer)"
+```
+
+```bash
+# cd /path/to/dir/lingua/exp_srcs
+export WORLD_SIZE=2 &&\
+export MASTER_ADDR=node0 &&\
+export MASTER_PORT=23458
+export DP=1 &&\
+export SHARD=2 &&\
+export TP=1
+torchrun --nproc_per_node=$WORLD_SIZE --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT \
+test_shampoo.py
+```
+
+- warnings
+
+```
+[rank0]: ValueError: Invalid start_preconditioning_step value: 20. Must be >= precondition_frequency=100.
+```
+
+```
+start_preconditioning_step set to -1. Setting start_preconditioning_step equal to precondition frequency 100 by default.
+```
+
+- actual logs
+
+```python
+rank: 1, world_rank: 1, world size: 2, device: cuda:1
+rank: 0, world_rank: 0, world size: 2, device: cuda:0
+
+    model: FullyShardedDataParallel(
+  (_fsdp_wrapped_module): Transformer(
+    (model): ModuleDict(
+      (wte): Embedding(50257, 1024)
+      (h): ModuleList(
+        (0-3): 4 x ResidualBlock(
+          (ln1): LayerNorm()
+          (attn): Attention(
+            (q_proj): Linear(in_features=1024, out_features=1024, bias=False)
+            (k_proj): Linear(in_features=1024, out_features=1024, bias=False)
+            (v_proj): Linear(in_features=1024, out_features=1024, bias=False)
+            (o_proj): Linear(in_features=1024, out_features=1024, bias=False)
+          )
+          (ln2): LayerNorm()
+          (mlp): MLP(
+            (ffn1): Linear(in_features=1024, out_features=4096, bias=False)
+            (act): GELU(approximate='none')
+            (ffn2): Linear(in_features=4096, out_features=1024, bias=False)
+          )
+        )
+      )
+      (ln): LayerNorm()
+    )
+    (lm_head): Linear(in_features=1024, out_features=50257, bias=False)
+  )
+)
+
+- if freq=100, start_preconditioning=100, iter=100
+
+```python
+start_preconditioning_step set to -1. Setting start_preconditioning_step equal to precondition frequency 100 by default.
+(10th step) loss: 0.0012735219206660986
+(20th step) loss: 0.00038887240225449204
+(30th step) loss: 0.0002023066335823387
+(40th step) loss: 0.00014369595737662166
+(50th step) loss: 0.00011663915938697755
+(60th step) loss: 0.00010105434193974361
+(70th step) loss: 9.017760748974979e-05
+(80th step) loss: 8.183371392078698e-05
+(90th step) loss: 7.500954961869866e-05
+(100th step) loss: 6.913893594173715e-05
+```
+
+- if freq=20, start_preconditioning=20, iter=100 
+
+```python
+(10th step) loss: 0.0012735219206660986
+(20th step) loss: 0.00038887240225449204
+(30th step) loss: 3.665658823592821e-06
+(40th step) loss: 1.639122501728707e-06
+(50th step) loss: 1.043079237206257e-06
+(60th step) loss: 8.046615107559774e-07
+(70th step) loss: 7.152547709665669e-07
+(80th step) loss: 6.854525622657093e-07
+(90th step) loss: 5.960458224762988e-07
+(100th step) loss: 5.36441234544327e-07
+```
+
+## further things to followup
+
+[muon](https://github.com/KellerJordan/modded-nanogpt)

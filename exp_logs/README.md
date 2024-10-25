@@ -120,15 +120,15 @@ node0:23440:23664 [0] NCCL INFO ncclCommInitRank comm 0x563d5b2b3360 rank 0 nran
 ## mup
 
 ```bash
-export WORLD_SIZE=2
+export WORLD_SIZE=8
 export MASTER_ADDR=node0
 export MASTER_PORT=23458
 
-# export COMPILE=true
-# export DP_DEGREE=8
-# export DP_SHARD_DEGREE=1
-# export TP_DEGREE=1
-# export FSDP_TYPE=full_shard
+export COMPILE=true
+export DP_DEGREE=8
+export DP_SHARD_DEGREE=1
+export TP_DEGREE=1
+export FSDP_TYPE=full_shard
 
 # export COMPILE=true
 # export DP_DEGREE=1
@@ -136,29 +136,30 @@ export MASTER_PORT=23458
 # export TP_DEGREE=1
 # export FSDP_TYPE=full_shard
 
-export COMPILE=false
-export DP_DEGREE=1
-export DP_SHARD_DEGREE=1
-export TP_DEGREE=2
-export FSDP_TYPE=full_shard
+# export COMPILE=false
+# # export COMPILE=true
+# export DP_DEGREE=4
+# export DP_SHARD_DEGREE=1
+# export TP_DEGREE=2
+# export FSDP_TYPE=full_shard
 
 export QK_NORM=false
 export RES_POST_NORM=false
 
 export STEPS=20000
 export WARMUP=1000
-export BSZ=2
+export BSZ=8
 export ACCUM=1
 
 export CONFIG=llama_8B_proxy
 
-LRS=(0.00195)
-# LRS=( # low resolution sweep / 2^-13 ~ 2^-4
-#         0.000122 0.00024 0.00049
-#         0.00098 0.00195
-#         0.00391 0.00781
-#         0.01562 0.03125 0.0625
-# )
+# LRS=(0.00195)
+LRS=( # low resolution sweep / 2^-13 ~ 2^-4
+        0.000122 0.00024 0.00049
+        0.00098 0.00195
+        0.00391 0.00781
+        0.01562 0.03125 0.0625
+)
 # LRS=( # high resolution sweep / 2^-13 ~ 2^-4
 #         0.000122 0.00024 0.00049
 #         0.00098 0.00138 0.00195 0.00276

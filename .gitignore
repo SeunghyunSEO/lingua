@@ -10,5 +10,4 @@ data/*
 exp_logs/scripts/*.sh
 exp_logs/scripts/*.md
 exp_logs/assets/logs/*
-dmoe/assets/torch_profiler_logs/*
-dmoe/multiprocessing_pdb/*
+exp_srcs/assets/torch_profiler_logs/*

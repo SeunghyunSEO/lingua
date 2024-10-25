@@ -1,0 +1,8 @@
+README.md
+setup.py
+multiprocessing_pdb/__init__.py
+multiprocessing_pdb/multiprocessing_pdb.py
+multiprocessing_pdb.egg-info/PKG-INFO
+multiprocessing_pdb.egg-info/SOURCES.txt
+multiprocessing_pdb.egg-info/dependency_links.txt
+multiprocessing_pdb.egg-info/top_level.txt

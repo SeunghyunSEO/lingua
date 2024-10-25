@@ -400,7 +400,7 @@ def parallelize_model(
         assert (
             distributed_args.compile == False
         ), "Compile is not supported for TP parallelism"
-
+        
         tp_parallelize(model, device_mesh["tp"], model_args, distributed_args)
 
     if distributed_args.float8_recipe is not None:
@@ -476,15 +476,23 @@ def parallelize_model(
         )
 
     if distributed_args.compile:
+        '''
+        https://github.com/pytorch/torchtitan/blob/main/torchtitan/parallelisms/parallelize_llama.py#L68-L74
+        https://github.com/pytorch/torchtitan/blob/1060feacc1b51cb6b339a04e53a5243b8466552b/torchtitan/parallelisms/parallelize_llama.py#L299
+        https://github.com/pytorch/torchtitan/blob/1060feacc1b51cb6b339a04e53a5243b8466552b/torchtitan/models/llama/model.py#L371-L373
+        '''
         torch._dynamo.config.cache_size_limit = (
             distributed_args.compile_cache_size_limit
         )
         # if model_args.fused_rms_norm == "fused_rmsnorm":
-        #     # https://github.com/pytorch/torchtitan/blob/main/torchtitan/parallelisms/parallelize_llama.py#L68-L74
         #     raise NotImplementedError(
         #         "fused_rmsnorm is not compatible with torch.compile yet. "
         #         "Please use rmsnorm or layernorm."
         #     )
         model = torch.compile(model)
+        # for layer_id, layer in model.layers.named_children():
+        #     layer = torch.compile(layer, fullgraph=True)
+        #     model.layers.register_module(layer_id, layer)
+        # logger.info("Compiling each TransformerBlock with torch.compile")
 
     return model

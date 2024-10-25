@@ -26,6 +26,9 @@ from lingua.transformer import (
 from fused_kernels.fused_rms_norm import FusedRMSNorm
 from fused_kernels.fused_ce import fused_cross_entropy
 
+import logging
+logger = logging.getLogger()
+
 
 def create_causal_mask(seqlen, attn_impl, sliding_window):
     if sliding_window is not None and attn_impl == "xformers":
@@ -303,7 +306,7 @@ def tp_parallelize(model, tp_mesh, model_args: LMTransformerArgs, distributed_ar
         torch._inductor.config._micro_pipeline_tp = True
         enable_symm_mem_for_group(tp_mesh.get_group().group_name)
 
-    print(
+    logger.info(
         f"Applied {'Float8 ' if enable_float8 else ''}{'Async ' if distributed_args.enable_async_tp else ''}"
         "Tensor Parallelism to the model"
     )

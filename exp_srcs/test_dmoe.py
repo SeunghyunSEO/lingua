@@ -20,8 +20,8 @@ from torch.distributed.checkpoint.state_dict import (
 from torch.distributed.tensor.parallel.ddp import _pre_dp_module_transform
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from dmoe import dMoE
-from ffn import dtensorify_param
+from dmoe.dmoe import dMoE
+from dmoe.ffn import dtensorify_param
 from utils import (
     set_seed,
     init_dist,
@@ -35,10 +35,6 @@ try:
     is_megablocks_imported = True
 except ModuleNotFoundError:
     is_megablocks_imported = False
-
-# from pdb import set_trace as Tra
-from multiprocessing_pdb import MultiprocessingPdb
-Tra = MultiprocessingPdb().set_trace
 
 
 def _get_all_inputs(
@@ -65,7 +61,8 @@ def test_dmoe(
     two_d_input: bool = False,
 ):
     assert is_megablocks_imported, "you should install megablocks for comparison"
-    rank, world_size = init_dist()
+    rank, world_rank, world_size, device = init_dist()
+    # rank = dist.get_rank()
     set_seed()
 
     # moe configs
@@ -74,7 +71,6 @@ def test_dmoe(
     moe_top_k = min(2, moe_num_experts)
 
     # Generate inputs
-    rank = dist.get_rank()
     batch_size = 2
     seq_len = 3
     hidden_size = 256

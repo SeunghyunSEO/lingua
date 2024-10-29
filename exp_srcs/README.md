@@ -51,7 +51,7 @@ rank: 1, world size: 2
 ```
 
 
-## 3d parallelism test
+## 2d-3d parallelism test
 
 ### FSDP
 
@@ -376,6 +376,9 @@ git submodule update --init --recursive
 export NVTE_FRAMEWORK=pytorch 
 pip install .
 cd ..
+
+# grouped gemm
+pip install --verbose git+https://github.com/fanshiqing/grouped_gemm@main
 ```
 
 ```bash
@@ -390,6 +393,9 @@ pip install -e .
 export WORLD_SIZE=2 &&\
 export MASTER_ADDR=node0 &&\
 export MASTER_PORT=23459 &&\
+export DP=1 &&\
+export SHARD=1 &&\
+export EP=2
 torchrun --nproc_per_node=$WORLD_SIZE --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT \
 test_dmoe.py
 ```
@@ -397,6 +403,672 @@ test_dmoe.py
 ```python
 
 ```
+
+<details>
+
+for my understanding) simplified megablocks impl
+
+```python
+class MoE(torch.nn.Module):
+
+    def __init__(self, args: Arguments):
+        super(MoE, self).__init__()
+
+        self.router = router.LearnedRouter(args)
+        self.experts = self._init_experts_mlp(args)
+
+    def _init_experts_mlp(self, args: Arguments):
+        return ParallelMLP(args)
+
+    def forward(self, x: torch.Tensor):
+        # Compute the expert scores and assignments.
+        scores, expert_weights, top_experts = self.router(x)
+
+        # Compute the experts.
+        out = self.experts(x, scores, expert_weights, top_experts)
+        return out
+
+class dMoE(moe.MoE):
+
+    def _init_experts_mlp(self, args: Arguments):
+        return ParallelDroplessMLP(args)
+```
+
+```python
+class LearnedRouter(torch.nn.Module):
+
+    def __init__(self, args: Arguments):
+        super().__init__()
+        self.args = args
+
+        # Learned router parameters.
+        #
+        # NOTE: This weight matrix is not parallelized with expert model
+        # parallelism. Each device needs the entire router weight matrix
+        # so that it can route its batch of data correctly.
+        self.layer = torch.nn.Linear(
+            args.hidden_size, # e.g. 4096
+            args.moe_num_experts, # e.g. experts: 64
+            bias=False,
+            dtype=common.dtype(args),
+            device=args.device,
+        )
+
+    def _top_k(self, scores: torch.Tensor):
+        if self.args.moe_top_k == 1:
+            return scores.max(dim=-1, keepdim=True)
+        return torch.topk(scores, self.args.moe_top_k, dim=-1)
+
+    def forward(self, x: torch.Tensor):
+        scores = self.layer(x.view(-1, x.shape[-1])).softmax(dim=-1)
+        expert_weights, expert_indices = self._top_k(scores)
+        return scores, expert_weights, expert_indices
+```
+
+```python
+## core kernels and comm operators
+import megablocks.ops as ops
+from megablocks.layers import common, mlp, mpu, router, sharedexpert_registry
+from megablocks.layers.all_to_all import all_to_all
+from megablocks.layers.arguments import Arguments
+
+## core parallel MoE layer
+class ParallelMLP(torch.nn.Module):
+
+    def __init__(self, args: Arguments):
+        super(ParallelMLP, self).__init__()
+        self.args = args
+
+        self.num_experts = args.moe_num_experts
+        self.top_k = self.args.moe_top_k
+
+        self.mlp = mlp.MLP(args)
+
+        self.forward_fn = (self.parallel_forward_once if args.moe_expert_model_parallelism else self.forward_once)
+
+    def forward(self, x: torch.Tensor, scores: torch.Tensor, expert_weights: torch.Tensor, top_experts: torch.Tensor):
+        in_shape = x.size()
+        x, tokens_per_expert = self.forward_fn(x, expert_weights, top_experts)
+        x = x.view(in_shape)
+        return x
+
+    def forward_once(self, x: torch.Tensor, expert_weights: torch.Tensor, top_experts: torch.Tensor):
+        # x: [sl, bs, hs]
+        # expert_weights: [sl * bs, top-k]
+        # top_experts: [sl * bs, top-k]
+        expert_weights = expert_weights.flatten()
+        top_experts = top_experts.flatten()
+        with torch.no_grad():
+            indices, bin_ids, bins, tokens_per_expert = (self.indices_and_bins(top_experts))
+
+            # If expert_capacity is set to zero, set the number of tokens per expert to the maximum we need to avoid dropping tokens.
+            sl, bs, _ = x.size()
+            expert_capacity = self.expert_capacity(sl * bs)
+            if expert_capacity == 0:
+                expert_capacity = torch.max(tokens_per_expert).item()
+
+        x = self.permute_and_compute(
+            x,
+            tokens_per_expert,
+            indices,
+            bin_ids,
+            expert_weights,
+            bins,
+            expert_capacity,
+            self.top_k,
+        )
+        return x, tokens_per_expert
+```
+
+```python
+    def expert_capacity(self, tokens: int) -> int:
+        world_size = mpu.get_expert_parallel_world_size(self.args)
+        tokens_per_expert = (self.top_k * tokens * world_size / self.num_experts)
+        return int(self.args.moe_capacity_factor * tokens_per_expert)
+
+    def indices_and_bins(self, top_expert: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        # Sort the expert ids to produce the scatter/gather
+        # indices for the permutation.
+        #
+        # TODO(tgale): Is it worth doing this conversion to 32-bit
+        # prior? Could we place the `torch.max` operation to return
+        # 32-bit expert indices?
+        top_expert = top_expert.int()
+        output = ops.sort(top_expert, self.sort_end_bit)
+        assert output is not None
+        bin_ids, indices = output
+
+        # Histogram the expert ids to identify the number of
+        # tokens routed to each expert.
+        #
+        # TODO(tgale): Does the sorted data produce a more favorable
+        # data distribution for histogram? Or is the op parallelism
+        # worth more?
+        tokens_per_expert = ops.histogram(top_expert, self.num_experts)
+
+        # Calculate the bin bounds for the sorted tokens.
+        bins = ops.inclusive_cumsum(tokens_per_expert, 0)
+        assert bins is not None
+        bins = bins.view(1) if not len(bins.size()) else bins
+
+        assert isinstance(indices, torch.Tensor)
+        assert isinstance(bin_ids, torch.Tensor)
+        assert isinstance(bins, torch.Tensor)
+        assert isinstance(tokens_per_expert, torch.Tensor)
+
+        return indices, bin_ids, bins, tokens_per_expert
+
+    def permute_and_compute(
+        self,
+        x: torch.Tensor,
+        tokens_per_expert: int,  # unused
+        indices: torch.Tensor,
+        bin_ids: torch.Tensor,  # unused
+        expert_weights: torch.Tensor,
+        bins: torch.Tensor,
+        expert_capacity: int,
+        top_k: int,
+    ):
+        # Route the tokens for MoE computation.
+        x = x.view(-1, x.shape[-1]) # [B*T, C] maybe
+        output = ops.binned_gather(x, indices, bins, expert_capacity, top_k)
+        assert output is not None
+        x = output
+
+        # Perform the expert computation. Note that we don't use biases for these linear operations.
+        x = self.mlp(x)
+
+        # Un-route the data for the MoE output.
+        return ops.binned_scatter(x, indices, expert_weights, bins, top_k)
+```
+
+- for expert parallel, we need below forward
+
+```python
+    def parallel_forward_once(self, x: torch.Tensor, expert_weights: torch.Tensor, top_experts: torch.Tensor):
+        # NOTE: This function implements the same computation as forward_once
+        # but with expert model parallelism.
+        #
+        # 1. Permute the tokens locally so that they are grouped by their
+        # expert assignments. This allows us to transfer all of the tokens
+        # for a remote device in one communication primitive.
+        #
+        # 2. Permute the tokens across the expert parallel devices. After
+        # this is completed each device has all of the tokens assigned to
+        # its set of experts in its local HBM.
+        #
+        # 3. Permute the tokens locally so that they are grouped by their
+        # expert assignement. After the distributed permutation the tokens
+        # are grouped by which device they came from. We re-order them
+        # locally to allow for efficient computation.
+        #
+        # After this series of permutations we compute the linear layers
+        # and then repeat these three steps in reverse to produce the final
+        # output.
+        #
+        # Compute the mapping of local tokens to experts.
+
+        # Compute the mapping of local tokens to experts.
+        expert_weights = expert_weights.flatten()
+        top_experts = top_experts.flatten()
+        with torch.no_grad():
+            indices, bin_ids, bins, tokens_per_expert = (self.indices_and_bins(top_experts))
+
+            # If we're sharding the experts along the hidden dimension
+            # multiple devices own parts of the same sets of experts.
+            # Replicate the token counts so every device gets the counts.
+            repeated_tokens_per_expert = ops.repeat(
+                tokens_per_expert,
+                (mpu.hidden_sharding_degree(self.args),),
+            )
+
+            # Pass token count information to the device on which the
+            # target expert resides.
+            parallel_tokens_per_expert = torch.empty_like(repeated_tokens_per_expert,)
+            tpe_handle = dist.all_to_all_single(
+                parallel_tokens_per_expert,
+                repeated_tokens_per_expert,
+                group=self.args.expert_parallel_group,
+                async_op=True,
+            )
+
+        # Permute locally and without any padding so that tokens for each
+        # parallel device are stored contiguously.
+        #
+        # This view updates the shape of the tensor from [sl, bs, hs] to
+        # [sl * bs, hs] prior to the permutation.
+        x = x.view(-1, x.shape[-1])
+        output = ops.gather(x, indices, bin_ids, bins, self.top_k)
+        assert output is not None
+        x = output
+
+        # Compute the number of tokens that will be received from each
+        # device and permute the input data across the devices.
+        with torch.no_grad():
+            tpe_handle.wait()
+            experts_per_rank = mpu.experts_per_rank(self.args)
+
+            # Reshape to [world_size, num_experts_per_rank].
+            world_size = mpu.get_expert_parallel_world_size(self.args)
+            repeated_tokens_per_expert = (repeated_tokens_per_expert.view(world_size, experts_per_rank))
+            parallel_tokens_per_expert = (parallel_tokens_per_expert.view(world_size, experts_per_rank))
+
+            # TODO(tgale): It might be faster to do this on the GPU and
+            # then communicate the results back to the host.
+            send_counts = repeated_tokens_per_expert.cpu().sum(dim=-1)
+            parallel_tokens_per_expert_cpu = parallel_tokens_per_expert.cpu()
+            recv_counts = parallel_tokens_per_expert_cpu.sum(dim=-1)
+
+            # Convert the send/recv counts to lists.
+            send_counts = send_counts.tolist()
+            recv_counts = recv_counts.tolist()
+            tokens_received = sum(recv_counts)
+
+        # If we're sharding the experts along the hidden dimension
+        # multiple devices own parts of the same sets of experts.
+        # Replicate the token counts so devices that share experts
+        # get all of the tokens assigned to them.
+        #
+        # TODO(tgale): Fuse this into the prior, local permutation.
+        x = ops.repeat(x, (mpu.hidden_sharding_degree(self.args), 1))
+
+        # Start the cross-device permutation asynchronously so we can
+        # overlap communication with computation.
+        parallel_x, parallel_x_handle = all_to_all(
+            x,
+            recv_counts,
+            send_counts,
+            self.args.expert_parallel_group,
+            async_op=True,
+        )
+
+        with torch.no_grad():
+            # After we do the cross-device permutation we have the tokens on the
+            # correct device but not yet grouped by expert because we received
+            # tokens from each device as contiguous chunks. To group the tokens
+            # for expert computation we'll do one more local permutation. The
+            # rest of this torch.no_grad() scope sets up the indices and bins
+            # for this permutation.
+            replicate_bins = ops.inclusive_cumsum(
+                parallel_tokens_per_expert.flatten(),
+                0,
+            )
+            replicate_bins = (replicate_bins.view(1) if not len(replicate_bins.size()) else replicate_bins)
+
+            # Construct the expert indices for the permuted tokens.
+            parallel_top_expert = torch.remainder(
+                torch.arange(
+                    self.num_experts * mpu.hidden_sharding_degree(self.args),
+                    dtype=torch.int32,
+                    device=indices.device,
+                ),
+                mpu.experts_per_rank(self.args),
+            )
+            parallel_top_expert = ops.replicate(
+                parallel_top_expert.unsqueeze(dim=0),
+                replicate_bins,
+                tokens_received,
+            ).flatten()
+
+            # TODO(tgale): The sort_end_bit here can be reduced.
+            parallel_bin_ids, parallel_indices = ops.sort(
+                parallel_top_expert,
+                self.sort_end_bit,
+            )
+
+            # Calculate the bins boundaries from the token counts.
+            parallel_tokens_per_expert = parallel_tokens_per_expert.sum(
+                dim=0,
+                dtype=torch.int,
+            )
+            parallel_bins = ops.inclusive_cumsum(parallel_tokens_per_expert, 0)
+            parallel_bins = (parallel_bins.view(1) if not len(parallel_bins.size()) else parallel_bins)
+
+            # If expert_capacity is set to zero, set the number of tokens
+            # per expert to the maximum we need to avoid dropping tokens.
+            tokens, _ = x.size()
+            expert_capacity = self.expert_capacity(tokens)
+            if expert_capacity == 0:
+                expert_capacity = torch.max(parallel_tokens_per_expert).item()
+
+        # Locally permute the tokens and perform the expert computation.
+        # Block to make sure that the cross-device permutation is complete.
+        if self.args.mlp_impl == 'grouped':
+            # GroupedMLP requires counts on CPU. We can use the tensor already
+            # moved to CPU for the prior all_to_all, which avoids an extra
+            # device synchronization.
+            parallel_tokens_per_expert = parallel_tokens_per_expert_cpu.sum(
+                dim=0,
+                dtype=torch.int,
+            )
+        parallel_x_handle.wait()
+        parallel_x = self.permute_and_compute(
+            parallel_x,
+            parallel_tokens_per_expert,
+            parallel_indices,
+            parallel_bin_ids,
+            None,  # expert_weights
+            parallel_bins,
+            expert_capacity,
+            top_k=1,
+        )
+
+        # Un-permute the tokens across the devices.
+        x, _ = all_to_all(
+            parallel_x,
+            send_counts,
+            recv_counts,
+            self.args.expert_parallel_group,
+        )
+
+        # Reduce along the hidden sharding to get the final outputs.
+        #
+        # TODO(tgale): Fuse this into the following local permutation.
+        shape = (
+            mpu.hidden_sharding_degree(self.args),
+            -1,
+            self.args.hidden_size,
+        )
+        x = ops.sum(x.view(shape), dim=0)
+
+        # Un-permute locally to setup for the next series of operations.
+        x = ops.scatter(x, indices, bin_ids, expert_weights, bins, self.top_k)
+        return x, tokens_per_expert.flatten()
+```
+
+- for dropless moe
+  - Q. where is parallel_forward_once for dmoe?
+
+```python
+class ParallelDroplessMLP(moe.ParallelMLP):
+
+    def __init__(self, args: Arguments):
+        super(ParallelDroplessMLP, self).__init__(args)
+        self.hidden_size = args.hidden_size
+        self.ffn_hidden_size = mpu.features_per_rank(args)
+        self.blocking = 128
+        self.mlp = dmlp_registry.get(args) ## glu or mlp
+
+        # Calculate the number of bits needed to represent the column indices
+        # in the intermediate sparse matrix.
+        max_column_index = ((self.ffn_hidden_size * self.num_experts) // self.blocking)
+        self.transpose_sort_end_bit = max(
+            int(np.ceil(np.log2(max_column_index))),
+            1,
+        )
+
+    def forward_once(self, x, expert_weights, top_experts):
+        if self.args.mlp_impl == 'sparse':
+            return self.sparse_forward_once(x, expert_weights, top_experts)
+        else:
+            return self.grouped_forward_once(x, expert_weights, top_experts)
+
+    def permute_and_compute(
+        self,
+        x,
+        tokens_per_expert,
+        indices,
+        bin_ids,
+        expert_weights,
+        bins,
+        expert_capactiy,
+        top_k,
+    ):
+        if self.args.mlp_impl == 'sparse':
+            return self.sparse_permute_and_compute(
+                x,
+                tokens_per_expert,
+                indices,
+                bin_ids,
+                expert_weights,
+                bins,
+                expert_capactiy,
+                top_k,
+            )
+        else:
+            return self.grouped_permute_and_compute(
+                x,
+                tokens_per_expert,
+                indices,
+                bin_ids,
+                expert_weights,
+                bins,
+                expert_capactiy,
+                top_k,
+            )
+```
+
+```python
+    def sparse_forward_once(self, x, expert_weights, top_experts):
+        # x: [sl, bs, hs]
+        # expert_weights: [sl * bs, top-k]
+        # top_experts: [sl * bs, top-k]
+        expert_weights = expert_weights.flatten()
+        top_experts = top_experts.flatten()
+        with torch.no_grad():
+            indices, bin_ids, bins, padded_bins, tokens_per_expert = (self.indices_and_padded_bins(top_experts))
+
+        # Route the tokens for MoE computation.
+        x = x.view(-1, x.shape[-1])
+        x = ops.padded_gather(
+            x,
+            indices,
+            bin_ids,
+            bins,
+            padded_bins,
+            self.top_k,
+        )
+
+        # Create the sparse matrix topology.
+        with torch.no_grad():
+            topo = self.topology(x, padded_bins)
+
+        # Perform the expert computation.
+        x = self.mlp(x, topo)
+
+        # Un-route the data for the MoE output.
+        x = ops.padded_scatter(
+            x,
+            indices,
+            bin_ids,
+            expert_weights,
+            bins,
+            padded_bins,
+            self.top_k,
+        )
+        return x, tokens_per_expert
+
+    # For use in the base-class parallel_forward_once.
+    def sparse_permute_and_compute(
+        self,
+        x,
+        tokens_per_expert,
+        indices,
+        bin_ids,
+        expert_weights,
+        bins,
+        expert_capactiy,  # unused
+        top_k,
+    ):
+
+        # Round the token counts up to the block size used in the matrix
+        # multiplication. Calculate the starting position of each bin.
+        padded_tokens_per_expert = ops.round_up(
+            tokens_per_expert,
+            self.blocking,
+        )
+        padded_bins = ops.inclusive_cumsum(padded_tokens_per_expert, 0)
+        padded_bins = promote_scalar(padded_bins)
+
+        # Route the tokens for MoE computation.
+        x = x.view(-1, x.shape[-1])
+        x = ops.padded_gather(x, indices, bin_ids, bins, padded_bins, top_k)
+
+        # Create the sparse matrix topology.
+        with torch.no_grad():
+            topo = self.topology(x, padded_bins)
+
+        # Perform the expert computation.
+        x = self.mlp(x, topo)
+
+        # Un-route the data for the MoE output.
+        return ops.padded_scatter(
+            x,
+            indices,
+            bin_ids,
+            expert_weights,
+            bins,
+            padded_bins,
+            top_k,
+        )
+```
+
+```python
+    def topology(self, x, padded_bins):
+        padded_tokens, _ = x.size()
+        assert padded_tokens % self.blocking == 0
+        if self.ffn_hidden_size % self.blocking != 0:
+            raise ValueError(
+                f'The ffn_hidden_size {self.ffn_hidden_size} must be divisible by ' +
+                f'the block size {self.blocking}. Please update your configuration.',
+            )
+
+        # Offsets for the sparse matrix. All rows have the
+        # same number of nonzero blocks dictated by the
+        # dimensionality of a single expert.
+        block_rows = padded_tokens // self.blocking
+        blocks_per_row = self.ffn_hidden_size // self.blocking
+        offsets = torch.arange(
+            0,
+            block_rows * blocks_per_row + 1,
+            blocks_per_row,
+            dtype=torch.int32,
+            device=x.device,
+        )
+
+        # Indices for the sparse matrix. The indices for
+        # the intermediate matrix are dynamic depending
+        # on the mapping of tokens to experts.
+        column_indices = ops.topology(
+            padded_bins,
+            self.blocking,
+            block_rows,
+            blocks_per_row,
+        )
+
+        # TODO(tgale): This is unused. Remove the need for this in stk.
+        # For now, use meta init to save the device memory.
+        data = torch.empty(
+            column_indices.numel(),
+            self.blocking,
+            self.blocking,
+            dtype=common.dtype(self.args),
+            device='meta',
+        )
+        shape = (
+            padded_tokens,
+            self.ffn_hidden_size * mpu.experts_per_rank(self.args),
+        )
+        row_indices = stk.ops.row_indices(shape, data, offsets, column_indices)
+        column_indices_t, offsets_t, block_offsets_t = self.sparse_transpose(
+            shape,
+            row_indices,
+            column_indices,
+            offsets,
+        )
+        return stk.Matrix(
+            shape,
+            data,
+            row_indices,
+            column_indices,
+            offsets,
+            column_indices_t,
+            offsets_t,
+            block_offsets_t,
+        )
+```
+
+```python
+    def sparse_transpose(self, size, row_indices, column_indices, offsets):
+        block_columns = size[1] // self.blocking
+
+        # Sort row indices by column indices to get the transposed matrix's
+        # column indices.
+        #
+        # NOTE: Our sort operation uses the same width indices as the input values.
+        # To avoid overflow when we have large activation matrices we cast to
+        # 32-bit before sorting.
+        _, gather_indices = ops.sort(
+            column_indices.int(),
+            self.transpose_sort_end_bit,
+        )
+
+        # There are a constant number of blocks in every row of the sparse matrix.
+        # A blocks offset is:
+        #
+        # row_index * blocks_per_row + column_index % blocks_per_row
+        #
+        # Once we have the block offsets ordered for transposition we can divide
+        # by blocks_per_row to get the transposed column indices.
+        column_indices_t = row_indices.gather(0, gather_indices.long())
+        block_offsets_t = gather_indices.int()
+
+        zero = torch.zeros((1,), dtype=torch.int32, device=row_indices.device)
+        nnz_per_column = ops.histogram(column_indices, block_columns)
+        nnz_per_column = ops.inclusive_cumsum(nnz_per_column, 0)
+        if nnz_per_column.dim() == 0:
+            # This addresses an edge case when ffn_hidden_size is equal to self.blocking.
+            nnz_per_column = nnz_per_column.unsqueeze(0)
+        offsets_t = torch.cat([zero, nnz_per_column])
+        return column_indices_t, offsets_t, block_offsets_t
+```
+
+```python
+    def grouped_forward_once(self, x, expert_weights, top_experts):
+        # x: [sl, bs, hs]
+        # expert_weights: [sl * bs, top-k]
+        # top_experts: [sl * bs, top-k]
+        expert_weights = expert_weights.flatten()
+        top_experts = top_experts.flatten()
+        with torch.no_grad():
+            indices, bin_ids, bins, tokens_per_expert = (self.indices_and_bins(top_experts))
+
+        out = self.grouped_permute_and_compute(
+            x,
+            tokens_per_expert,
+            indices,
+            bin_ids,
+            expert_weights,
+            bins,
+            -1,  # unused
+            self.args.moe_top_k,
+        )
+        return out, tokens_per_expert
+
+    def grouped_permute_and_compute(
+        self,
+        x,
+        tokens_per_expert,
+        indices,
+        bin_ids,
+        expert_weights,
+        bins,
+        expert_capactiy,  # unused
+        top_k,
+    ):
+
+        # Route the tokens for MoE computation.
+        x = x.view(-1, x.shape[-1])
+        x = ops.gather(x, indices, bin_ids, bins, top_k)
+
+        # Perform the expert computation.
+        x = self.mlp(x, tokens_per_expert)
+
+        # Un-route the data for the MoE output.
+        return ops.scatter(x, indices, bin_ids, expert_weights, bins, top_k)
+```
+
+</details>
 
 
 # shampoo

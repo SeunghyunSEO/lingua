@@ -455,7 +455,7 @@ class Attention(nn.Module):
         if self.args.mup:
             assert init_std is not None
             assert InitStdFactor(self.args.init_std_factor) in [InitStdFactor.GLOBAL_DEPTH, InitStdFactor.CURRENT_DEPTH]
-            base_head_dim = self.args.base_head_dim or self.args.base_dim // self.args.base_n_heads
+            base_head_dim = self.args.base_head_dim or int(self.args.base_dim // self.args.base_n_heads)
             in_proj_scale = float(self.head_dim/base_head_dim) ** -0.5
             out_proj_scale = float(self.head_dim/base_head_dim) ** -0.5
             out_proj_scale /= factor
@@ -529,7 +529,7 @@ class FeedForward(nn.Module):
         self.hidden_dim = hidden_dim
 
         if self.args.mup:
-            self.base_dim = self.args.base_dim or self.args.base_dim // self.args.base_n_heads
+            self.base_dim = self.args.base_dim or self.args.base_head_dim * self.args.base_n_heads
             base_hidden_dim = adjust_hidden_dim(
                 4 * self.base_dim, 
                 self.args.base_ffn_dim_multiplier, 

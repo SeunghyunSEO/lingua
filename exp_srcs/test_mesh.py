@@ -1,7 +1,8 @@
 '''
 https://pytorch.org/tutorials/recipes/distributed_device_mesh.html
-https://pytorch.org/tutorials/intermediate/TP_tutorial.html
+https://pytorch.org/docs/stable/distributed.tensor.html
 https://pytorch.org/tutorials/intermediate/FSDP_tutorial.html
+https://pytorch.org/tutorials/intermediate/TP_tutorial.html
 
 https://github.com/pytorch/examples/blob/main/distributed/tensor_parallelism/fsdp_tp_example.py
 https://github.com/pytorch/torchtitan/blob/main/torchtitan/parallelisms/parallelize_llama.py

@@ -143,6 +143,21 @@ export FSDP_TYPE=full_shard
 # export TP_DEGREE=2
 # export FSDP_TYPE=full_shard
 
+# export N_HEADS=4
+# export N_KV_HEADS=4
+# export BASE_N_HEADS=4
+# export BASE_N_KV_HEADS=4
+
+# export N_HEADS=8
+# export N_KV_HEADS=8
+# export BASE_N_HEADS=8
+# export BASE_N_KV_HEADS=8
+
+export N_HEADS=16
+export N_KV_HEADS=16
+export BASE_N_HEADS=16
+export BASE_N_KV_HEADS=16
+
 export QK_NORM=false
 export RES_POST_NORM=false
 
@@ -155,13 +170,13 @@ export CONFIG=llama_8B_proxy
 
 # LRS=(0.00195)
 LRS=( # low resolution sweep / 2^-13 ~ 2^-4
-        0.000122 0.00024 0.00049
+        0.000061 0.000122 0.00024 0.00049
         0.00098 0.00195
         0.00391 0.00781
         0.01562 0.03125 0.0625
 )
 # LRS=( # high resolution sweep / 2^-13 ~ 2^-4
-#         0.000122 0.00024 0.00049
+#         0.000061 0.000122 0.00024 0.00049
 #         0.00098 0.00138 0.00195 0.00276
 #         0.00391 0.00552 0.00781 0.01105
 #         0.01562 0.03125 0.0625
@@ -170,7 +185,8 @@ export WANDB_PROJECT_NAME="lingua"
 
 for LR in "${LRS[@]}"; do
     export LR=$LR
-    WANDB_EXP_NAME="mup_proxy_world_${WORLD_SIZE}_DP_${DP_DEGREE}_SHARD_${DP_SHARD_DEGREE}_TP_${TP_DEGREE}_fsdp_${FSDP_TYPE}_compile_${COMPILE}"
+    WANDB_EXP_NAME="mup_proxy_nhead_${N_HEADS}_nkvhead_${N_KV_HEADS}_basenhead_${BASE_N_HEADS}_basenkvhead_${BASE_N_KV_HEADS}"
+    WANDB_EXP_NAME="${WANDB_EXP_NAME}_world_${WORLD_SIZE}_DP_${DP_DEGREE}_SHARD_${DP_SHARD_DEGREE}_TP_${TP_DEGREE}_fsdp_${FSDP_TYPE}_compile_${COMPILE}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_step_${STEPS}_warmup_${WARMUP}_bsz_${BSZ}_accum_${ACCUM}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_lr_${LR}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_qknorm_${QK_NORM}_resnorm_${RES_POST_NORM}"

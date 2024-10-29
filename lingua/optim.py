@@ -129,14 +129,14 @@ def get_optimizer(model, args, model_args):
         }
 
         base_dim = model_args.base_dim or int(model_args.base_head_dim * model_args.base_n_heads)
-        base_head_dim = model_args.base_head_dim or model_args.base_dim // model_args.base_n_heads
+        base_head_dim = model_args.base_head_dim or int(model_args.base_dim // model_args.base_n_heads)
         base_ffn_hidden_dim = adjust_hidden_dim(
             4*base_dim, 
             model_args.base_ffn_dim_multiplier, 
             model_args.base_multiple_of
         )
         dim = model_args.dim or int(model_args.head_dim * model_args.n_heads)
-        head_dim = model_args.head_dim or model_args.dim // model_args.n_heads
+        head_dim = model_args.head_dim or int(model_args.dim // model_args.n_heads)
         ffn_hidden_dim = adjust_hidden_dim(
             4*dim, 
             model_args.ffn_dim_multiplier, 

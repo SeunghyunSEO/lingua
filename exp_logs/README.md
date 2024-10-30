@@ -150,7 +150,6 @@ export TP_DEGREE=1
 # export DP_SHARD_DEGREE=1
 # export TP_DEGREE=2
 
-<<<<<<< HEAD
 ############################################################
 export FSDP_TYPE=full_shard
 # export FSDP_TYPE=no_shard

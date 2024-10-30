@@ -71,6 +71,8 @@ import wandb
 
 logger = logging.getLogger()
 
+from pdb import set_trace as Tra
+
 
 @dataclass
 class TrainArgs:
@@ -85,6 +87,7 @@ class TrainArgs:
 
     gc_collect_freq: int = 1000
     probe_freq: Optional[int] = None
+    logging_probe_result_to_wandb: Optional[bool] = None
 
     # Nb optimizer steps to take
     steps: int = 1000
@@ -387,9 +390,7 @@ def train(args: TrainArgs):
             # of all linears' inputs, weights and outputs
             # along with attention logits and entropy
             # both in forward and backward pass
-            if (args.probe_freq is not None) and every_n_steps(
-                train_state, args.probe_freq, acc_step=1 % args.grad_acc_steps
-            ):
+            if (args.probe_freq is not None) and every_n_steps(train_state, args.probe_freq, acc_step=1 % args.grad_acc_steps):
                 # Here we do a fake forward and backward pass on a smaller
                 # batch size to avoid OOM
                 # This assumes the model has no stateful layers (batch norm..)
@@ -412,6 +413,63 @@ def train(args: TrainArgs):
                         labels[:probe_bsz, :probe_seq],
                     )
                     probe_loss.backward()
+
+                    if args.logging_probe_result_to_wandb:
+                        '''
+                        probing key's like ...
+
+                        FSDPLMTransformer.layers.0.attention_norm::resid                                                                                                                                                                          
+                        FSDPLMTransformer.layers.0.attention.wq::in                                                                                                                                                                               
+                        FSDPLMTransformer.layers.0.attention.wq::w                                                                                                                                                                                
+                        FSDPLMTransformer.layers.0.attention.wq::out                                                                                                                                                                                                                                                                                                                                                       
+                        FSDPLMTransformer.layers.0.attention::attn_entropy                                                                                                                                                                        
+                        FSDPLMTransformer.layers.0.attention::attn_logits                                                                                                                                                                         
+
+                        FSDPLMTransformer.output::w.g
+                        FSDPLMTransformer.output::in.g
+                        FSDPLMTransformer.output::out.g
+                        FSDPLMTransformer.norm::resid.g
+                        '''
+                        metrics = {
+                            "global_step": train_state.step,
+                            # "activation": {},
+                            # "weight": {},
+                            # "grad": {},
+                        }
+                        stats_to_parse = ['l1', 'l2', 'std', 'mean', 'max', 'min']
+                        for s in stats_to_parse:
+                            metrics[f"activation_{s}"] = {}
+                            metrics[f"weight_{s}"] = {}
+                            metrics[f"grad_{s}"] = {}
+
+                        activation_stats_suffix = ['resid', 'in', 'out', 'attn_entropy', 'attn_logits']
+                        weight_stats_suffix = ['w']
+                        grad_stats_suffix = ['.g']
+
+                        # TOOD: should handle all reduce for gradient ??? i think it's ok because we use original model, not wrapped?
+                        for k in probe.store.keys():
+                            suffix = k.split('::')[-1]
+                            if suffix in activation_stats_suffix:
+                                metric_key = 'activation'
+                            elif suffix in weight_stats_suffix:
+                                metric_key = 'weight'
+                            elif suffix[-2:] in grad_stats_suffix:
+                                metric_key = 'grad'
+                            else:
+                                raise NotImplementedError
+                            stats_to_parse = [
+                                'l1', 'l2', 'std', 'mean', 'max', 'min'
+                            ] if '::attn_entropy' not in k else [
+                                'std', 'mean', 'max', 'min'
+                            ]
+                            layer_name = k.split('LMTransformer.')[-1]
+                            for s in stats_to_parse:
+                                metrics[f'{metric_key}_{s}'][layer_name] = probe.store[k][s].item()
+
+                        metrics = flatten_dict(metrics, sep="/")
+                        if get_is_master():
+                            metric_logger.log(metrics)
+
                     # We zero grads to cancel this fake step
                     optimizer.zero_grad()
 
@@ -480,11 +538,12 @@ def train(args: TrainArgs):
                 # This is an estimate and the correct values may change
                 # if you change the architecture
                 # Use xformer's analyze profile trace to get actual measurement
+                d_model = args.model.dim or int(args.model.head_dim * args.model.n_heads)
                 FLOPS = (
                     get_num_flop_per_token(
-                        model_param_count - args.model.vocab_size * args.model.dim,
+                        model_param_count - args.model.vocab_size * d_model,
                         args.model.n_layers,
-                        args.model.dim,
+                        d_model,
                         args.data.seq_len,
                     )
                     * wps

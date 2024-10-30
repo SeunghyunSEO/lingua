@@ -10,8 +10,8 @@
     - [ ] activation norm 
     - [ ] grad norm
     - [ ] param norm 
-- [ ] dmoe
-- [ ] dist shampoo
+- [ ] enabling dmoe
+- [ ] enabling dist shampoo
 
 
 ## example run
@@ -120,69 +120,98 @@ node0:23440:23664 [0] NCCL INFO ncclCommInitRank comm 0x563d5b2b3360 rank 0 nran
 ## mup
 
 ```bash
-export WORLD_SIZE=8
+export WORLD_SIZE=1
+# export WORLD_SIZE=8
 export MASTER_ADDR=node0
 export MASTER_PORT=23458
 
+############################################################
 export COMPILE=true
-export DP_DEGREE=8
+# export COMPILE=false
+
+export DP_DEGREE=1
 export DP_SHARD_DEGREE=1
 export TP_DEGREE=1
-export FSDP_TYPE=full_shard
 
-# export COMPILE=true
+# export DP_DEGREE=8
+# export DP_SHARD_DEGREE=1
+# export TP_DEGREE=1
+
+# export DP_DEGREE=2
+# export DP_SHARD_DEGREE=4
+# export TP_DEGREE=1
+
 # export DP_DEGREE=1
 # export DP_SHARD_DEGREE=8
 # export TP_DEGREE=1
-# export FSDP_TYPE=full_shard
 
-# export COMPILE=false
-# # export COMPILE=true
+############################################################
 # export DP_DEGREE=4
 # export DP_SHARD_DEGREE=1
 # export TP_DEGREE=2
-# export FSDP_TYPE=full_shard
+
+############################################################
+export FSDP_TYPE=full_shard
+# export FSDP_TYPE=no_shard
+
+############################################################
+export INIT_BASE_STD=0.04419 # 1/sqrt(512)
+# export INIT_BASE_STD=0.0883 # 1/sqrt(128)
+export BASE_N_HEADS=4
+export BASE_N_KV_HEADS=1
 
 # export N_HEADS=4
+# export N_KV_HEADS=1
+export N_HEADS=8
+export N_KV_HEADS=2
+# export N_HEADS=16
 # export N_KV_HEADS=4
-# export BASE_N_HEADS=4
-# export BASE_N_KV_HEADS=4
-
-# export N_HEADS=8
+# export N_HEADS=32
 # export N_KV_HEADS=8
-# export BASE_N_HEADS=8
-# export BASE_N_KV_HEADS=8
 
-export N_HEADS=16
-export N_KV_HEADS=16
-export BASE_N_HEADS=16
-export BASE_N_KV_HEADS=16
-
+############################################################
 export QK_NORM=false
 export RES_POST_NORM=false
 
-export STEPS=20000
-export WARMUP=1000
-export BSZ=8
+############################################################
+export STEPS=20
+export WARMUP=0
+export BSZ=2
 export ACCUM=1
 
-export CONFIG=llama_8B_proxy
+# export STEPS=20000
+# export WARMUP=1000
+# export BSZ=4
+# export ACCUM=1
 
+############################################################
+export PROBE_FREQ=1
+# export PROBE_FREQ=100
+export PROBE_WANDB=true
+export PROFILING_RUN=true
+# export PROBE_FREQ=none
+# export PROBE_WANDB=false
+# export PROFILING_RUN=false
+
+############################################################
+LRS=(0.01)
 # LRS=(0.00195)
-LRS=( # low resolution sweep / 2^-13 ~ 2^-4
-        0.000061 0.000122 0.00024 0.00049
-        0.00098 0.00195
-        0.00391 0.00781
-        0.01562 0.03125 0.0625
-)
+# LRS=( # low resolution sweep / 2^-13 ~ 2^-4
+#         0.000061 0.000122 0.00024 0.00049
+#         0.00098 0.00195
+#         0.00391 0.00781
+#         0.01562 0.03125 0.0625
+# )
 # LRS=( # high resolution sweep / 2^-13 ~ 2^-4
 #         0.000061 0.000122 0.00024 0.00049
 #         0.00098 0.00138 0.00195 0.00276
 #         0.00391 0.00552 0.00781 0.01105
 #         0.01562 0.03125 0.0625
 # )
-export WANDB_PROJECT_NAME="lingua"
 
+############################################################
+export CONFIG=llama_8B_proxy
+export WANDB_PROJECT_NAME="lingua"
 for LR in "${LRS[@]}"; do
     export LR=$LR
     WANDB_EXP_NAME="mup_proxy_nhead_${N_HEADS}_nkvhead_${N_KV_HEADS}_basenhead_${BASE_N_HEADS}_basenkvhead_${BASE_N_KV_HEADS}"

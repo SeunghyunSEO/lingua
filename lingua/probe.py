@@ -37,6 +37,8 @@ from torch.nn.attention import sdpa_kernel, SDPBackend
 
 from xformers.ops import fmha
 
+from pdb import set_trace as Tra
+
 
 @torch.library.custom_op("torchprobe::log", mutates_args=(), device_types=None)
 def _log(x: torch.Tensor, name: str, uid: str) -> None:
@@ -83,7 +85,6 @@ QUANTILES = [
 def _get_quantiles(device: torch.device, dtype) -> torch.Tensor:
     return torch.tensor(QUANTILES, device=device, dtype=dtype)
 
-
 def _get_stats(x_: torch.Tensor, remove_inf=False) -> Dict[str, Any]:
     if x_.dtype not in [torch.float, torch.double, torch.float16, torch.bfloat16]:
         return {}
@@ -92,19 +93,29 @@ def _get_stats(x_: torch.Tensor, remove_inf=False) -> Dict[str, Any]:
         x = x[x.abs() < float("inf")]
     if x.dtype is not torch.double:
         x = x.float()
+
     xabs = x.abs()
     quantiles = _get_quantiles(x.device, x.dtype)
     mean = x.mean()
     std = x.std()
+
     return {
         "shape": tuple(x_.shape),
+
         "mean": mean,
         "std": std,
+
         "skew": (((x - mean) / std) ** 3).double().mean(),
         "kurtosis": (((x - mean) / std) ** 4).double().mean(),
         "abs.mean": xabs.mean(),
+
         "max": x.max(),
         "min": x.min(),
+
+        # https://github.com/microsoft/mup/blob/main/mup/coord_check.py#L43
+        'l1': torch.mean(torch.abs(x)),
+        'l2': torch.sqrt(torch.mean(x ** 2)), # it's rather RMS norm, https://en.wikipedia.org/wiki/Root_mean_square
+
         # Note: `quantile` takes at most 2**24 elements, see
         # https://github.com/pytorch/pytorch/issues/64947
         "quantiles": torch.quantile(x[: 2**24], quantiles),
@@ -578,6 +589,7 @@ def test_toy_model() -> None:
     m.compile()
     optim = torch.optim.SGD(m.parameters(), lr=0.0)
     probe = AutoProbeD(m, "./probe.json")
+    # Tra()
 
     for i in range(4):
         with contextlib.ExitStack() as stack:
@@ -628,3 +640,6 @@ def test_toy_model() -> None:
                         assert math.isfinite(value["abs.mean"].item()), f"Inf/Nan for {key}"
             optim.step()
             optim.zero_grad()
+
+if __name__ == "__main__":
+    test_toy_model()

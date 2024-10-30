@@ -16,6 +16,31 @@ import triton.language as tl
 MAX_FUSED_SIZE = 65536 // 2
 
 
+## https://github.com/linkedin/Liger-Kernel/pull/318
+import operator
+import functools
+import importlib
+from typing import Callable
+from packaging.version import Version
+
+def compare_version(package: str, operator: Callable, target: str):
+    try:
+        pkg = importlib.import_module(package)
+    except ImportError:
+        return False
+    pkg_version = Version(pkg.__version__)
+    return operator(pkg_version, Version(target))
+
+def get_amp_custom_fwd_bwd() -> Callable:
+    if compare_version("torch", operator.ge, "2.4.0"):
+        return (
+            functools.partial(torch.amp.custom_fwd, device_type="cuda"),
+            functools.partial(torch.amp.custom_bwd, device_type="cuda"),
+        )
+    return torch.cuda.amp.custom_fwd, torch.cuda.amp.custom_bwd
+
+amp_custom_fwd, amp_custom_bwd = get_amp_custom_fwd_bwd()
+
 @triton.jit
 def element_mul_kernel(
     X_ptr,
@@ -209,9 +234,7 @@ def fused_linear_cross_entropy_forward(
     label_smoothing=0.0,
     reduction="mean",
 ):
-    dtype = (
-        torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else _input.dtype
-    )
+    dtype = _input.dtype
     device = _input.device
 
     # inputs have shape: BT x H
@@ -376,8 +399,10 @@ def fused_linear_cross_entropy_backward(
             )
     return grad_input, grad_weight, grad_bias
 
+
 class LigerFusedLinearCrossEntropyFunction(torch.autograd.Function):
     @staticmethod
+    @amp_custom_fwd
     def forward(
         ctx,
         _input,
@@ -417,6 +442,7 @@ class LigerFusedLinearCrossEntropyFunction(torch.autograd.Function):
         return loss
 
     @staticmethod
+    @amp_custom_bwd
     def backward(ctx, grad_output):
         (grad_input, grad_weight, grad_bias) = ctx.saved_tensors
         grad_input, grad_weight, grad_bias = fused_linear_cross_entropy_backward(

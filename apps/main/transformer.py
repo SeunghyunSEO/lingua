@@ -82,14 +82,14 @@ class LMTransformer(BaseTransformer):
         self.sliding_window = args.sliding_window
 
         assert args.vocab_size > 0
-
-        self.tok_embeddings = torch.nn.Embedding(args.vocab_size, args.dim)
+        d_model = args.dim or int(args.n_heads * args.head_dim)
+        self.tok_embeddings = torch.nn.Embedding(args.vocab_size, d_model)
 
         norm = FusedRMSNorm if self.args.fused_rms_norm else RMSNorm
-        self.norm = norm(args.dim, eps=args.norm_eps)
+        self.norm = norm(d_model, eps=args.norm_eps)
 
         self.output = nn.Linear(
-            args.dim,
+            d_model,
             args.vocab_size,
             bias=False,
         )
@@ -127,7 +127,7 @@ class LMTransformer(BaseTransformer):
         scale_ = self.args.output_mult*(dim/base_dim)**-1.0 if self.args.mup else 1.0
 
         if self.args.fused_ce:
-            raise NotImplementedError("currently not supported because of Dtensor")
+            # raise NotImplementedError("currently not supported because of Dtensor")
             assert target is not None, "fused ce need target because it does not materialize logit to save VRAM memory"
             assert h.size(1) == target.size(1)
             h = scale_ * self.norm(h).float()
@@ -194,8 +194,11 @@ def build_fsdp_grouping_plan(model_args: LMTransformerArgs):
     for i in range(model_args.n_layers):
         group_plan.append((f"layers.{i}", False))
 
-    group_plan.append(("output", True))
+    if model_args.fused_ce:
+        return group_plan
 
+    group_plan.append(("output", True))
+    
     return group_plan
 
 
@@ -205,7 +208,8 @@ https://github.com/pytorch/torchtitan/blob/main/torchtitan/parallelisms/parallel
 '''
 # Optional and only used for model/tensor parallelism when tp_size > 1
 def tp_parallelize(model, tp_mesh, model_args: LMTransformerArgs, distributed_args, enable_float8=False):
-    assert model_args.dim % distributed_args.tp_size == 0
+    d_model = model_args.dim or int(model_args.n_heads * model_args.head_dim)
+    assert d_model % distributed_args.tp_size == 0
     assert model_args.vocab_size % distributed_args.tp_size == 0
     assert model_args.n_heads % distributed_args.tp_size == 0
     assert (model_args.n_kv_heads or 0) % distributed_args.tp_size == 0

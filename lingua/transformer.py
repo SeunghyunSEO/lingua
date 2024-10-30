@@ -30,8 +30,10 @@ class InitStdFactor(Enum):
 
 @dataclass
 class BaseTransformerArgs:
-    dim: int = 512
-    n_layers: int = 8
+    # dim: int = 512
+    # n_layers: int = 8
+    dim: Optional[int] = None
+    n_layers: Optional[int] = None
     head_dim: Optional[int] = None
     n_heads: Optional[int] = None
     n_kv_heads: Optional[int] = None
@@ -371,8 +373,9 @@ class Attention(nn.Module):
 
         if args.qk_norm:
             norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
-            self.q_norm = norm(args.dim, eps=args.norm_eps)
-            self.k_norm = norm(args.dim, eps=args.norm_eps)
+            d_model = dim or int(n_heads * head_dim)
+            self.q_norm = norm(d_model, eps=args.norm_eps)
+            self.k_norm = norm(d_model, eps=args.norm_eps)
 
     def forward(
         self,
@@ -455,10 +458,17 @@ class Attention(nn.Module):
         if self.args.mup:
             assert init_std is not None
             assert InitStdFactor(self.args.init_std_factor) in [InitStdFactor.GLOBAL_DEPTH, InitStdFactor.CURRENT_DEPTH]
+
+            base_dim = self.args.base_dim or int(self.args.base_head_dim * self.args.base_n_heads)
             base_head_dim = self.args.base_head_dim or int(self.args.base_dim // self.args.base_n_heads)
-            in_proj_scale = float(self.head_dim/base_head_dim) ** -0.5
-            out_proj_scale = float(self.head_dim/base_head_dim) ** -0.5
+
+            # in_proj_scale = float(self.head_dim/base_head_dim) ** -0.5
+            # out_proj_scale = float(self.head_dim/base_head_dim) ** -0.5
+            in_proj_scale = float(self.dim/base_dim) ** -0.5
+            out_proj_scale = float(self.dim/base_dim) ** -0.5
+            
             out_proj_scale /= factor
+
             for w in [self.wq, self.wk, self.wv]:
                 nn.init.trunc_normal_(
                     w.weight,
@@ -529,7 +539,7 @@ class FeedForward(nn.Module):
         self.hidden_dim = hidden_dim
 
         if self.args.mup:
-            self.base_dim = self.args.base_dim or self.args.base_head_dim * self.args.base_n_heads
+            self.base_dim = self.args.base_dim or int(self.args.base_head_dim * self.args.base_n_heads)
             base_hidden_dim = adjust_hidden_dim(
                 4 * self.base_dim, 
                 self.args.base_ffn_dim_multiplier, 
@@ -556,7 +566,8 @@ class FeedForward(nn.Module):
 
         if args.residual_post_norm:
             norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
-            self.fc2_norm = norm(args.dim, eps=args.norm_eps)
+            d_model = args.dim or int(args.n_heads * args.head_dim)
+            self.fc2_norm = norm(d_model, eps=args.norm_eps)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # B S D
@@ -572,7 +583,7 @@ class FeedForward(nn.Module):
             assert init_std is not None
             assert InitStdFactor(self.args.init_std_factor) in [InitStdFactor.GLOBAL_DEPTH, InitStdFactor.CURRENT_DEPTH]
             in_init_std = init_std
-            out_init_std = init_std * (self.base_hidden_dim/self.base_dim)**-0.5
+            out_init_std = init_std * (self.base_hidden_dim/self.base_dim) ** -0.5 # e.g. intermediate dim is 4 times larger
             in_proj_scale = float(self.dim/self.base_dim) ** -0.5
             out_proj_scale = float(self.hidden_dim/self.base_hidden_dim) ** -0.5
             out_proj_scale /= factor # discount residual branch
@@ -618,19 +629,18 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.args = args
 
-        assert (args.head_dim is not None) or (
-            args.n_heads is not None
-        ), "Should specify at least head_dim or n_heads"
+        assert (args.head_dim is not None) or (args.n_heads is not None), "Should specify at least head_dim or n_heads"
         self.head_dim = args.head_dim or args.dim // args.n_heads
         self.n_heads = args.n_heads or args.dim // args.head_dim
         self.n_kv_heads = args.n_kv_heads or self.n_heads
+        d_model = args.dim or int(args.n_heads * args.head_dim)
 
         assert args.n_heads % self.n_kv_heads == 0
-        assert args.dim % args.n_heads == 0
+        assert d_model % args.n_heads == 0
 
         self.attention = Attention(
             args=args,
-            dim=args.dim,
+            dim=d_model,
             head_dim=self.head_dim,
             n_heads=self.n_heads,
             n_kv_heads=self.n_kv_heads,
@@ -638,14 +648,14 @@ class TransformerBlock(nn.Module):
         )
         self.feed_forward = FeedForward(
             args=args,
-            dim=args.dim,
-            hidden_dim=4 * args.dim,
+            dim=d_model,
+            hidden_dim=4 * d_model,
             multiple_of=args.multiple_of,
             ffn_dim_multiplier=args.ffn_dim_multiplier,
         )
         norm = FusedRMSNorm if self.args.fused_rms_norm else RMSNorm
-        self.attention_norm = norm(args.dim, eps=args.norm_eps)
-        self.ffn_norm = norm(args.dim, eps=args.norm_eps)
+        self.attention_norm = norm(d_model, eps=args.norm_eps)
+        self.ffn_norm = norm(d_model, eps=args.norm_eps)
 
     def forward(
         self,
@@ -678,13 +688,13 @@ class BaseTransformer(nn.Module):
     def __init__(self, args: BaseTransformerArgs):
         super().__init__()
         self.args = args
-        self.dim = args.dim
+        self.dim = args.dim or int(args.n_heads * args.head_dim)
         self.init_base_std = args.init_base_std
         self.init_std_factor = InitStdFactor(args.init_std_factor)
         self.max_seqlen = args.max_seqlen
         self.rope_embeddings = RotaryEmbedding(
             theta=args.rope_theta,
-            head_dim=args.head_dim or args.dim // args.n_heads,
+            head_dim=args.head_dim or int(args.dim // args.n_heads),
             max_seqlen=args.max_seqlen,
         )
 

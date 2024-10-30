@@ -128,6 +128,7 @@ def get_optimizer(model, args, model_args):
             'fused': True,
         }
 
+        ## proxy model's configs
         base_dim = model_args.base_dim or int(model_args.base_head_dim * model_args.base_n_heads)
         base_head_dim = model_args.base_head_dim or int(model_args.base_dim // model_args.base_n_heads)
         base_ffn_hidden_dim = adjust_hidden_dim(
@@ -135,6 +136,8 @@ def get_optimizer(model, args, model_args):
             model_args.base_ffn_dim_multiplier, 
             model_args.base_multiple_of
         )
+
+        ## target model's configs
         dim = model_args.dim or int(model_args.head_dim * model_args.n_heads)
         head_dim = model_args.head_dim or int(model_args.dim // model_args.n_heads)
         ffn_hidden_dim = adjust_hidden_dim(
@@ -172,11 +175,11 @@ def get_optimizer(model, args, model_args):
                     no_decay_vector_like_p['params'].append(p)
                 else:
                     if 'wo' in n:
-                        width_mult = head_dim/base_head_dim
+                        width_mult = dim/base_dim
                     elif 'w2' in n:
                         width_mult = ffn_hidden_dim/base_ffn_hidden_dim
                     else:
-                        width_mult = head_dim/base_head_dim
+                        width_mult = dim/base_dim
                     matrix_like_p[width_mult]['params'].append(p)
 
         for width_mult, group in matrix_like_p.items():

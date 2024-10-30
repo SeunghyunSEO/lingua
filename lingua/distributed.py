@@ -294,6 +294,11 @@ def set_module(module, access_string, value):
 
 
 def default_fsdp_grouping_plan(n_layers: int) -> List[Tuple[str, bool]]:
+    '''
+    >>> n_layers=4
+    >>> [(f"layers.{i}", i < n_layers - 1) for i in range(n_layers)]
+    [('layers.0', True), ('layers.1', True), ('layers.2', True), ('layers.3', False)]
+    '''
     return [(f"layers.{i}", i < n_layers - 1) for i in range(n_layers)]
 
 
@@ -480,18 +485,26 @@ def parallelize_model(
         https://github.com/pytorch/torchtitan/blob/main/torchtitan/parallelisms/parallelize_llama.py#L68-L74
         https://github.com/pytorch/torchtitan/blob/1060feacc1b51cb6b339a04e53a5243b8466552b/torchtitan/parallelisms/parallelize_llama.py#L299
         https://github.com/pytorch/torchtitan/blob/1060feacc1b51cb6b339a04e53a5243b8466552b/torchtitan/models/llama/model.py#L371-L373
+        https://github.com/pytorch/torchtitan/issues/61
         '''
         torch._dynamo.config.cache_size_limit = (
             distributed_args.compile_cache_size_limit
         )
+
+        ## TODO
         # if model_args.fused_rms_norm == "fused_rmsnorm":
         #     raise NotImplementedError(
         #         "fused_rmsnorm is not compatible with torch.compile yet. "
         #         "Please use rmsnorm or layernorm."
         #     )
+
+        ## og
         model = torch.compile(model)
+
+        ## TODO
         # for layer_id, layer in model.layers.named_children():
-        #     layer = torch.compile(layer, fullgraph=True)
+        #     # layer = torch.compile(layer, fullgraph=True)
+        #     layer = torch.compile(layer)
         #     model.layers.register_module(layer_id, layer)
         # logger.info("Compiling each TransformerBlock with torch.compile")
 

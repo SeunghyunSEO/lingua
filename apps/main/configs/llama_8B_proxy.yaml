@@ -9,7 +9,6 @@ seed: 777
 ########################################
 
 distributed:
-  fsdp_type: ${oc.env:FSDP_TYPE}
   model_dtype: bf16
   matmul_allow_tf32: false
   selective_activation_checkpointing: false
@@ -18,14 +17,16 @@ distributed:
   dp_replicate: ${oc.env:DP_DEGREE}
   dp_shard: ${oc.env:DP_SHARD_DEGREE}
   tp_size: ${oc.env:TP_DEGREE}
+  fsdp_type: ${oc.env:FSDP_TYPE}
 
-# probe_freq: 100
-# profiling:
-#   run: true
-#   mem_warmup: 0
-#   mem_steps: 4
-#   profile_warmup: 100
-#   profile_steps: 4
+probe_freq: ${oc.env:PROBE_FREQ}
+logging_probe_result_to_wandb: ${oc.env:PROBE_WANDB}
+profiling:
+  run: ${oc.env:PROFILING_RUN}
+  mem_warmup: 0
+  mem_steps: 4
+  profile_warmup: 100
+  profile_steps: 4
 
 checkpoint:
   dump:
@@ -72,9 +73,9 @@ model:
   rope_theta: 100_000
 
   mup: true
-  init_base_std: 0.04419 # 1/sqrt(512)
-  # init_base_std: 0.0883 # 1/sqrt(128)
+  init_base_std: ${oc.env:INIT_BASE_STD} # 1/sqrt(512)
   init_std_factor: global_depth
+
   # base_dim: 512
   base_head_dim: 128
   base_n_heads: ${oc.env:BASE_N_HEADS}
@@ -86,13 +87,18 @@ model:
   readout_zero_init: true
 
   fused_rms_norm: true
+  # fused_ce: true
 
   qk_norm: ${oc.env:QK_NORM}
   residual_post_norm: ${oc.env:RES_POST_NORM}
 
 optim:
   lr: ${oc.env:LR}
-  weight_decay: 0.1
-  warmup: ${oc.env:WARMUP}
   lr_min_ratio: 0.1
+  warmup: ${oc.env:WARMUP}
+
   clip: 1.0
+  
+  weight_decay: 0.1
+  # truly_decoupled_wd: true
+  

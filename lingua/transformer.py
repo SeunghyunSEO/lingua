@@ -372,6 +372,7 @@ class Attention(nn.Module):
         )
 
         if args.qk_norm:
+            # assert not args.query_zero_init, "query_zero_init and qk_norm is not compatible because weights will not be updated ?"
             norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
             d_model = dim or int(n_heads * head_dim)
             self.q_norm = norm(d_model, eps=args.norm_eps)
@@ -401,7 +402,7 @@ class Attention(nn.Module):
 
         if self.args.qk_norm:
             xq = self.q_norm(xq)
-            xk = self.q_norm(xk)
+            xk = self.k_norm(xk)
 
         output_shape = xq.shape
         # B S D -> B S H D
@@ -477,8 +478,10 @@ class Attention(nn.Module):
                     a=-3 * init_std *in_proj_scale,
                     b=3 * init_std *in_proj_scale,
                 )
-            # if self.args.query_zero_init:
-            #     self.wq.weight.data.zero_()
+            if self.args.query_zero_init:
+                nn.init.zeros_(self.wq.weight)
+                # self.wq.weight.data.zero_()
+            
             nn.init.trunc_normal_(
                 self.wo.weight,
                 mean=0.0,
@@ -497,6 +500,10 @@ class Attention(nn.Module):
                     a=-3 * init_std,
                     b=3 * init_std,
                 )
+
+        if self.args.qk_norm:
+            self.q_norm.reset_parameters()
+            self.k_norm.reset_parameters()
 
 def adjust_hidden_dim(hidden_dim, ffn_dim_multiplier, multiple_of):
     '''
@@ -623,6 +630,9 @@ class FeedForward(nn.Module):
                 b=3 * out_init_std,
             )
 
+        if self.args.residual_post_norm:
+            self.fc2_norm.reset_parameters()
+
 
 class TransformerBlock(nn.Module):
     def __init__(self, args: BaseTransformerArgs):
@@ -682,6 +692,7 @@ class TransformerBlock(nn.Module):
 
         self.feed_forward.reset_parameters(init_std, factor)
         self.ffn_norm.reset_parameters()
+
 
 
 class BaseTransformer(nn.Module):

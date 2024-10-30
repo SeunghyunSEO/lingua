@@ -118,6 +118,8 @@ from collections import defaultdict
 def get_optimizer(model, args, model_args):
     opt_cls = AdamW
     truly_decoupled_wd = args.truly_decoupled_wd
+    if truly_decoupled_wd:
+        assert (group['weight_decay'] < 0.001), f"weight_decay value ({weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
 
     if model_args.mup:
         no_decay_name_list = ["bias", "norm"]
@@ -187,7 +189,6 @@ def get_optimizer(model, args, model_args):
             group['lr'] /= width_mult
 
             if truly_decoupled_wd:
-                assert (group['weight_decay'] < 0.001), f"weight_decay value ({weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
                 print(f"(matrix_like) using truly truly_decoupled_wd with lambda, {group['weight_decay']}")
                 group['weight_decay'] /= group['lr']
                 print(f"(matrix_like) after compensating lr, {group['weight_decay']}")

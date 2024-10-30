@@ -358,8 +358,15 @@ def train(args: TrainArgs):
             train_state.acc_step += 1
             train_state.acc_step = train_state.acc_step % args.grad_acc_steps
 
+            # current optim hparams 
+            # curr_lr = float(optimizer.param_groups[0]["lr"])
+            curr_lrs, curr_wds = {}, {}
+            for idx, optim_group in enumerate(optimizer.param_groups):
+                curr_lrs[f"optim_group_{idx}"] = float(optim_group["lr"])
+                curr_wds[f"optim_group_{idx}"] = float(optim_group["weight_decay"])
+            curr_lr = curr_lrs['optim_group_0']
+            
             # get batch
-            curr_lr = float(optimizer.param_groups[0]["lr"])
             data_load_start = timer()
             batch, train_state.data_loader_state = next(data_loader)
             batch = torch.tensor(
@@ -548,26 +555,27 @@ def train(args: TrainArgs):
                     )
                     * wps
                 )
-                metrics = flatten_dict(
-                    {
-                        "global_step": train_state.step,
-                        "acc_step": train_state.acc_step,
-                        "speed": {
-                            "wps": wps,
-                            "FLOPS": FLOPS,
-                            "MFU": (FLOPS/312e12)*100, # A100
-                            "curr_iter_time": curr_iter_time,
-                            "data_load_time": data_load_time,
-                        },
-                        "optim": {
-                            "grad_norm": grad_norm,
-                            "lr": curr_lr,
-                            "total_tokens": total_tokens,
-                        },
-                        "memory": gpu_mem_stats._asdict(),
+                metrics = {
+                    "global_step": train_state.step,
+                    "acc_step": train_state.acc_step,
+                    "speed": {
+                        "wps": wps,
+                        "FLOPS": FLOPS,
+                        "MFU": (FLOPS/312e12)*100, # A100
+                        "curr_iter_time": curr_iter_time,
+                        "data_load_time": data_load_time,
                     },
-                    sep="/",
-                )
+                    "optim": {
+                        "grad_norm": grad_norm,
+                        "lr": curr_lr,
+                        "total_tokens": total_tokens,
+                    },
+                    "memory": gpu_mem_stats._asdict(),
+                }
+                for (k, v), (k_, v_) in zip(curr_lrs.items(), curr_wds.items()):
+                    metrics["optim"][f"lr_{k}"] = v
+                    metrics["optim"][f"wd_{k_}"] = v_
+                metrics = flatten_dict(metrics, sep="/")
 
                 to_sync = {}
                 to_sync["loss/out"] = loss.item()

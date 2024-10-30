@@ -157,8 +157,9 @@ class LMTransformer(BaseTransformer):
                     a=-3 * init_std,
                     b=3 * init_std,
                 )
-            # if self.args.readout_zero_init:
-            #     self.output.weight.zero_()
+            if self.args.readout_zero_init:
+                nn.init.zeros_(self.output.weight)
+                # self.output.weight.zero_()
         else:
             init_std = init_std or (self.dim ** (-0.5))
             nn.init.trunc_normal_(

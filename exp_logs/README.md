@@ -1,6 +1,4 @@
-# tmp
-
-## TODO
+# TODO
 
 - [x] test run
 - [x] mup
@@ -14,7 +12,7 @@
 - [ ] enabling dist shampoo
 
 
-## example run
+# example run
 
 ```bash
 # create new venv
@@ -58,6 +56,8 @@ torchrun --nproc-per-node $WORLD_SIZE \
 -m apps.main.train \
 config=apps/main/configs/${CONFIG}.yaml
 ```
+
+<details>
 
 ```python
 node0:23440:23664 [0] NCCL INFO threadThresholds 8/8/64 | 16/8/64 | 512 | 512
@@ -116,12 +116,90 @@ node0:23440:23664 [0] NCCL INFO ncclCommInitRank comm 0x563d5b2b3360 rank 0 nran
 └── train.log
 ```
 
+</details>
 
-## mup
+
+# muP and muTransfer
+
+## coord check
 
 ```bash
 export WORLD_SIZE=1
-# export WORLD_SIZE=8
+export MASTER_ADDR=node0
+export MASTER_PORT=23458
+
+export COMPILE=true
+export DP_DEGREE=1
+export DP_SHARD_DEGREE=1
+export TP_DEGREE=1
+export FSDP_TYPE=no_shard
+
+export INIT_BASE_STD=0.04419 # 1/sqrt(512)
+# export INIT_BASE_STD=0.0883 # 1/sqrt(128)
+
+# export BASE_N_HEADS=4
+# export BASE_N_KV_HEADS=1
+export BASE_N_HEADS=4
+export BASE_N_KV_HEADS=4
+
+export N_HEADS_=(4 8 16)
+
+# export QK_NORM=false
+# export RES_POST_NORM=false
+export QK_NORM=true
+export RES_POST_NORM=true
+
+export STEPS=20
+export WARMUP=0
+export BSZ=2
+export ACCUM=1
+
+export PROBE_FREQ=1
+export PROBE_WANDB=true
+export PROFILING_RUN=true
+
+export LR=0.01
+
+SUFFIX=''
+
+############################################################
+export CONFIG=llama_8B_proxy
+export WANDB_PROJECT_NAME="lingua"
+for N_HEADS in "${N_HEADS_[@]}"; do
+
+    # export N_KV_HEADS=$((N_HEADS / 4))
+    export N_KV_HEADS=$N_HEADS
+
+    WANDB_EXP_NAME="coord_check_mup_proxy_nhead_${N_HEADS}_nkvhead_${N_KV_HEADS}_basenhead_${BASE_N_HEADS}_basenkvhead_${BASE_N_KV_HEADS}"
+    WANDB_EXP_NAME="${WANDB_EXP_NAME}_qknorm_${QK_NORM}_resnorm_${RES_POST_NORM}"
+    WANDB_EXP_NAME="${WANDB_EXP_NAME}${SUFFIX}"
+    export WANDB_EXP_NAME=$WANDB_EXP_NAME
+    export DUMP_DIR="exp_logs/assets/logs/${WANDB_EXP_NAME}"
+    torchrun --nproc-per-node $WORLD_SIZE \
+    -m apps.main.train \
+    config=apps/main/configs/${CONFIG}.yaml
+done
+```
+
+- 20 steps optimization and record
+- high enough lr=0.01 for sanity check
+- adamw with betas=(0.9, 0.95), weight decay: 0.0
+- zero init query and readout layers
+- comparison between qknorm + residual post norm (swin transformer / chameleon / gemma style) vs vanilla
+
+![lingua_mup_sanity_check_act_l2](assets/images/lingua_mup_sanity_check_act_l2.png)
+
+![lingua_mup_sanity_check_weight_std](assets/images/lingua_mup_sanity_check_weight_std.png)
+
+![lingua_mup_sanity_check_lr_wd](assets/images/lingua_mup_sanity_check_lr_wd.png)
+
+![lingua_mup_sanity_check_mem](assets/images/lingua_mup_sanity_check_mem.png)
+
+
+## muTransfer exp
+
+```bash
+export WORLD_SIZE=8
 export MASTER_ADDR=node0
 export MASTER_PORT=23458
 
@@ -129,13 +207,9 @@ export MASTER_PORT=23458
 export COMPILE=true
 # export COMPILE=false
 
-export DP_DEGREE=1
+export DP_DEGREE=8
 export DP_SHARD_DEGREE=1
 export TP_DEGREE=1
-
-# export DP_DEGREE=8
-# export DP_SHARD_DEGREE=1
-# export TP_DEGREE=1
 
 # export DP_DEGREE=2
 # export DP_SHARD_DEGREE=4
@@ -160,10 +234,10 @@ export INIT_BASE_STD=0.04419 # 1/sqrt(512)
 export BASE_N_HEADS=4
 export BASE_N_KV_HEADS=1
 
-# export N_HEADS=4
-# export N_KV_HEADS=1
-export N_HEADS=8
-export N_KV_HEADS=2
+export N_HEADS=4
+export N_KV_HEADS=1
+# export N_HEADS=8
+# export N_KV_HEADS=2
 # export N_HEADS=16
 # export N_KV_HEADS=4
 # export N_HEADS=32
@@ -174,34 +248,28 @@ export QK_NORM=false
 export RES_POST_NORM=false
 
 ############################################################
-export STEPS=20
-export WARMUP=0
-export BSZ=2
+export STEPS=40000 # 4*4096*8*40000=5.24B tokens
+export WARMUP=1000
+export BSZ=4
 export ACCUM=1
 
-# export STEPS=20000
-# export WARMUP=1000
-# export BSZ=4
-# export ACCUM=1
-
 ############################################################
-export PROBE_FREQ=1
-# export PROBE_FREQ=100
+export PROBE_FREQ=100
 export PROBE_WANDB=true
 export PROFILING_RUN=true
+
 # export PROBE_FREQ=none
 # export PROBE_WANDB=false
 # export PROFILING_RUN=false
 
 ############################################################
-LRS=(0.01)
 # LRS=(0.00195)
-# LRS=( # low resolution sweep / 2^-13 ~ 2^-4
-#         0.000061 0.000122 0.00024 0.00049
-#         0.00098 0.00195
-#         0.00391 0.00781
-#         0.01562 0.03125 0.0625
-# )
+LRS=( # low resolution sweep / 2^-13 ~ 2^-4
+        0.000061 0.000122 0.00024 0.00049
+        0.00098 0.00195
+        0.00391 0.00781
+        0.01562 0.03125 0.0625
+)
 # LRS=( # high resolution sweep / 2^-13 ~ 2^-4
 #         0.000061 0.000122 0.00024 0.00049
 #         0.00098 0.00138 0.00195 0.00276

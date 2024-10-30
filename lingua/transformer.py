@@ -466,7 +466,7 @@ class Attention(nn.Module):
             # out_proj_scale = float(self.head_dim/base_head_dim) ** -0.5
             in_proj_scale = float(self.dim/base_dim) ** -0.5
             out_proj_scale = float(self.dim/base_dim) ** -0.5
-            
+
             out_proj_scale /= factor
 
             for w in [self.wq, self.wk, self.wv]:

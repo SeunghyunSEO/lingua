@@ -121,7 +121,50 @@ node0:23440:23664 [0] NCCL INFO ncclCommInitRank comm 0x563d5b2b3360 rank 0 nran
 
 # muP and muTransfer
 
-## coord check
+## coord check using mup native codes
+
+- example code
+
+```python
+# cd /path/to/dir/lingua
+from mup.run_coord_check import *
+args = {
+    'loglog': True, # log 2 plot
+    'nseeds': 5, # to reduce varaince
+    'lr': 1e-2, # large enough lr
+    'vary_nhead': True,
+    'optimizer': 'customized_adamw',
+    'nsteps': 5,
+
+    'mup': True, # muP or SP
+    # 'mup': False,
+
+    'gqa': True, # if GQA is set true, num kv_head is 4 times small than num q_head
+    # 'gqa': False,
+}
+opt_args = {
+    'weight_decay': 0.01, 
+    'adam_beta1': 0.9, 
+    'adam_beta2': 0.95,
+}
+args.update(opt_args)
+plot_coord_check(**args)
+```
+
+### SP
+
+![SP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+
+![SP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+
+### muP
+
+![MuP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+
+![MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+
+
+## coord check using lingua app
 
 ```bash
 export WORLD_SIZE=1
@@ -143,6 +186,9 @@ export BASE_N_HEADS=4
 export BASE_N_KV_HEADS=4
 
 export N_HEADS_=(4 8 16)
+
+export WEIGHT_DECAY=0.0
+export TRULY_DECOUPLED_WD=false
 
 # export QK_NORM=false
 # export RES_POST_NORM=false
@@ -181,11 +227,14 @@ for N_HEADS in "${N_HEADS_[@]}"; do
 done
 ```
 
+- start with multi head attention (MHA) setting, not grouped query attention (GQA)
+- head_dim=128 is fixed and varying number of heads 
 - 20 steps optimization and record
 - high enough lr=0.01 for sanity check
 - adamw with betas=(0.9, 0.95), weight decay: 0.0
 - zero init query and readout layers
 - comparison between qknorm + residual post norm (swin transformer / chameleon / gemma style) vs vanilla
+- lol, i forgot to inject residual post norm to attention out proj layer 
 
 ![lingua_mup_sanity_check_act_l2](assets/images/lingua_mup_sanity_check_act_l2.png)
 
@@ -199,10 +248,6 @@ done
 ## muTransfer exp
 
 ```bash
-export WORLD_SIZE=8
-export MASTER_ADDR=node0
-export MASTER_PORT=23458
-
 ############################################################
 export COMPILE=true
 # export COMPILE=false
@@ -244,6 +289,10 @@ export N_KV_HEADS=1
 # export N_KV_HEADS=8
 
 ############################################################
+export WEIGHT_DECAY=0.1
+export TRULY_DECOUPLED_WD=false
+
+############################################################
 export QK_NORM=false
 export RES_POST_NORM=false
 
@@ -256,7 +305,7 @@ export ACCUM=1
 ############################################################
 export PROBE_FREQ=100
 export PROBE_WANDB=true
-export PROFILING_RUN=true
+export PROFILING_RUN=false
 
 # export PROBE_FREQ=none
 # export PROBE_WANDB=false
@@ -289,9 +338,18 @@ for LR in "${LRS[@]}"; do
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_qknorm_${QK_NORM}_resnorm_${RES_POST_NORM}"
     export WANDB_EXP_NAME=$WANDB_EXP_NAME
     export DUMP_DIR="exp_logs/assets/logs/${WANDB_EXP_NAME}"
+
+    ## local run
+    export WORLD_SIZE=8
+    export MASTER_ADDR=node0
+    export MASTER_PORT=23458
     torchrun --nproc-per-node $WORLD_SIZE \
     -m apps.main.train \
     config=apps/main/configs/${CONFIG}.yaml
+
+    # ## slurm run
+    # export SLURM_NNODES=1
+    # export PARTITION="batch-exp"
+    # bash ./scripts/run_slurm.sh
 done
 ```
-

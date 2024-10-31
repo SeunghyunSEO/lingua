@@ -101,7 +101,6 @@ optim:
 
   clip: 1.0
   
-  weight_decay: 0.0
-  # weight_decay: 0.1
-  # truly_decoupled_wd: true
+  weight_decay: ${oc.env:WEIGHT_DECAY}
+  truly_decoupled_wd: ${oc.env:TRULY_DECOUPLED_WD}
   

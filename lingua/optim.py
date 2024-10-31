@@ -136,7 +136,7 @@ def get_optimizer(model, args, model_args):
         base_ffn_hidden_dim = adjust_hidden_dim(
             4*base_dim, 
             model_args.base_ffn_dim_multiplier, 
-            model_args.base_multiple_of
+            model_args.base_multiple_of,
         )
 
         ## target model's configs
@@ -173,7 +173,6 @@ def get_optimizer(model, args, model_args):
                 if ('tok_embeddings' in n) or ('output' in n):
                     vector_like_p['params'].append(p)
                 elif any(ndnl in n for ndnl in no_decay_name_list):
-                    print(n)
                     no_decay_vector_like_p['params'].append(p)
                 else:
                     if 'wo' in n:

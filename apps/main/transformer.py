@@ -122,9 +122,12 @@ class LMTransformer(BaseTransformer):
 
         h = super().forward(h, tok_idx=tok_idx, mask=mask, attn_impl=attn_impl)
 
-        dim = self.args.dim or int(self.args.head_dim * self.args.n_heads)
-        base_dim = self.args.base_dim or int(self.args.base_head_dim * self.args.base_n_heads)
-        scale_ = self.args.output_mult*(dim/base_dim)**-1.0 if self.args.mup else 1.0
+        if self.args.mup:
+            dim = self.args.dim or int(self.args.head_dim * self.args.n_heads)
+            base_dim = self.args.base_dim or int(self.args.base_head_dim * self.args.base_n_heads)
+            scale_ = self.args.output_mult*(dim/base_dim)**-1.0
+        else:
+            scale_ = 1.0
 
         if self.args.fused_ce:
             # raise NotImplementedError("currently not supported because of Dtensor")
@@ -293,6 +296,7 @@ def tp_parallelize(model, tp_mesh, model_args: LMTransformerArgs, distributed_ar
             layer_plan["attention.q_norm"]: SequenceParallel()
             layer_plan["attention.k_norm"]: SequenceParallel()
         if model_args.residual_post_norm:
+            layer_plan["attention.o_norm"]: SequenceParallel()
             layer_plan["feed_forward.fc2_norm"]: SequenceParallel()
 
         parallelize_module(

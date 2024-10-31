@@ -371,12 +371,17 @@ class Attention(nn.Module):
             bias=False,
         )
 
-        if args.qk_norm:
+        if self.args.qk_norm:
             # assert not args.query_zero_init, "query_zero_init and qk_norm is not compatible because weights will not be updated ?"
             norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
             d_model = dim or int(n_heads * head_dim)
             self.q_norm = norm(d_model, eps=args.norm_eps)
             self.k_norm = norm(d_model, eps=args.norm_eps)
+
+        if self.args.residual_post_norm:
+            norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
+            d_model = dim or int(n_heads * head_dim)
+            self.o_norm = norm(d_model, eps=args.norm_eps)
 
     def forward(
         self,
@@ -451,6 +456,8 @@ class Attention(nn.Module):
             )
 
         output = self.wo(output.reshape(output_shape))
+        if self.args.residual_post_norm:
+            output = self.o_norm(output)
 
         return output
 
@@ -504,6 +511,8 @@ class Attention(nn.Module):
         if self.args.qk_norm:
             self.q_norm.reset_parameters()
             self.k_norm.reset_parameters()
+        if self.args.residual_post_norm:
+            self.o_norm.reset_parameters()
 
 def adjust_hidden_dim(hidden_dim, ffn_dim_multiplier, multiple_of):
     '''
@@ -571,7 +580,7 @@ class FeedForward(nn.Module):
             bias=False,
         )
 
-        if args.residual_post_norm:
+        if self.args.residual_post_norm:
             norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
             d_model = args.dim or int(args.n_heads * args.head_dim)
             self.fc2_norm = norm(d_model, eps=args.norm_eps)

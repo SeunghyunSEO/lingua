@@ -5,8 +5,10 @@
 - [x] fused kernel patch
     - TBD) fused ce dtensor issue
 - [ ] logger
-    - [ ] activation norm 
-    - [ ] grad norm
+    - [x] activation norm 
+        - already exists
+    - [x] grad norm
+        - already exists
     - [ ] param norm 
 - [ ] enabling dmoe
 - [ ] enabling dist shampoo

@@ -158,15 +158,15 @@ plot_coord_check(**args)
 
 ### SP
 
-![_SP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0__lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+![_SP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
 
-![_SP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+![_SP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
 
 ### muP
 
-![_MuP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0__lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+![_MuP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
 
-![_MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0__lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+![_MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
 
 ### muP with qknorm and residual post norm for better stability
 

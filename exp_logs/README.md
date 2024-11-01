@@ -141,6 +141,11 @@ args = {
 
     'gqa': True, # if GQA is set true, num kv_head is 4 times small than num q_head
     # 'gqa': False,
+
+    'qk_norm': True,
+    # 'qk_norm': False,
+    'residual_post_norm': True,
+    # 'residual_post_norm': False,
 }
 opt_args = {
     'weight_decay': 0.01, 
@@ -153,15 +158,23 @@ plot_coord_check(**args)
 
 ### SP
 
-![SP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+![_SP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0__lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
 
-![SP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+![_SP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
 
 ### muP
 
-![MuP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+![_MuP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0__lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
 
-![MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+![_MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0__lr_0.01customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+
+### muP with qknorm and residual post norm for better stability
+
+![MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_True_residual_post_norm_False_customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_True_residual_post_norm_False_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+
+![MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_False_residual_post_norm_True_customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_False_residual_post_norm_True_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+
+![MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_True_residual_post_norm_True_customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_True_residual_post_norm_True_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
 
 
 ## coord check using lingua app

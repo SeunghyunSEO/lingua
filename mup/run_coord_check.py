@@ -34,6 +34,7 @@ def get_lazy_model(
     base_width, base_nhead, base_kv_nhead,
     gqa=False,
     mup=True, readout_zero_init=True, query_zero_init=True, 
+    qk_norm=False, residual_post_norm=False,
     vary_nhead=False,
     init_std=0.02, input_mult=1, output_mult=1,
 ):
@@ -48,13 +49,20 @@ def get_lazy_model(
         base_args = {
             'vocab_size': len(tokenizer),
             'n_layers': 2,
+
             'head_dim': width,
             'n_heads': nhead,
             'n_kv_heads': kv_nhead,
+
             'ffn_dim_multiplier': 1.3,
             'multiple_of': 256,
             'init_base_std': init_std,
             'init_std_factor': 'global_depth',
+
+            'qk_norm': qk_norm,
+            'residual_post_norm': residual_post_norm,
+            
+            # 'fused_rms_norm': True,
         }
         if mup:
             mup_args = {
@@ -74,6 +82,8 @@ def get_lazy_model(
             }
             base_args.update(mup_args)
 
+        print(base_args)
+
         return LMTransformer(args=LMTransformerArgs(**base_args))
     
     return f
@@ -85,6 +95,7 @@ def plot_coord_check(
     nseeds=1, nsteps=4, loglog=False, logbase=2, legend=None,
     init_std=0.02, input_mult=10.0, output_mult=1.0,
     readout_zero_init=True, query_zero_init=True,
+    qk_norm=False, residual_post_norm=False,
     weight_decay=0.1, adam_beta1=0.9, adam_beta2=0.95,
     lr=None,
     **get_coord_data_kw
@@ -118,6 +129,7 @@ def plot_coord_check(
             gqa,
             mup=mup, vary_nhead=vary_nhead,
             readout_zero_init=readout_zero_init, query_zero_init=query_zero_init,
+            qk_norm=qk_norm, residual_post_norm=residual_post_norm,
             init_std=init_std, input_mult=input_mult, output_mult=output_mult,
         ) for (width, nhead, kv_nhead) in hiddens
     }
@@ -139,7 +151,8 @@ def plot_coord_check(
     os.makedirs(save_dir, exist_ok=True)
     suffix = ''
     save_file_name = f'{parameterization}_varying_{width}_gqa_{gqa}_basestd_{init_std}_inputmult_{input_mult}_outputmult_{output_mult}_lr_{lr}'
-    save_file_name += f'{optimizer}_wd_{weight_decay}_b1_{adam_beta1}_b2_{adam_beta2}'
+    save_file_name += f'_qk_norm_{qk_norm}_residual_post_norm_{residual_post_norm}'
+    save_file_name += f'_{optimizer}_wd_{weight_decay}_b1_{adam_beta1}_b2_{adam_beta2}'
     save_file_name += f'{suffix}'
 
     return plot_coord_data(

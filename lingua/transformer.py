@@ -375,8 +375,9 @@ class Attention(nn.Module):
             # assert not args.query_zero_init, "query_zero_init and qk_norm is not compatible because weights will not be updated ?"
             norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
             d_model = dim or int(n_heads * head_dim)
+            kv_d_model = int(n_kv_heads * head_dim)
             self.q_norm = norm(d_model, eps=args.norm_eps)
-            self.k_norm = norm(d_model, eps=args.norm_eps)
+            self.k_norm = norm(kv_d_model, eps=args.norm_eps)
 
         if self.args.residual_post_norm:
             norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
@@ -397,7 +398,7 @@ class Attention(nn.Module):
         xk = self.wk(x.view_as(x))
         xv = self.wv(x.view_as(x))
 
-        ## check TP
+        # ## check TP
         # print(f'''
         # bsz, seq_len, dim: {bsz, seq_len, dim}
         # xq.size(): {xq.size()}

@@ -23,30 +23,36 @@ def adjust_hidden_dim(hidden_dim, ffn_dim_multiplier, multiple_of):
     hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
     return hidden_dim
 
-def get_optimizer(model, lr, weight_decay, adam_beta1, adam_beta2, opt_cls, truly_decoupled_wd=False):
-    from torch.optim import SGD, Adam, AdamW
-    if opt_cls.lower() == 'adam':
-        opt_cls = Adam
-    elif opt_cls.lower() == 'adamw':
-        opt_cls = AdamW
-    elif opt_cls.lower() == 'sgd':
-        opt_cls = SGD
-    else:
-        raise NotImplementedError
-
-    model_args = model.args
-    
+def get_optimizer(model, args, model_args):
+    opt_cls = AdamW
+    truly_decoupled_wd = args.truly_decoupled_wd
     if truly_decoupled_wd:
         assert (group['weight_decay'] < 0.001), f"weight_decay value ({weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
 
-    if model_args.mup:
-        no_decay_name_list = ["bias", "norm"]
-        optimizer_grouped_parameters = []
-        opt_kwargs = {
-            'betas': (adam_beta1, adam_beta2),
-            'eps': 1e-8,
-            'fused': True,
+    def new_group():
+        new_g = {
+            'lr': args.lr,
+            'weight_decay': args.weight_decay,
         }
+        new_g['params'] = []
+        return new_g
+    def new_group_():
+        new_g = {
+            'lr': args.lr,
+            'weight_decay': 0.,
+        }
+        new_g['params'] = []
+        return new_g
+
+    no_decay_name_list = ["bias", "norm", "scaler"]
+    optimizer_grouped_parameters = []
+    opt_kwargs = {
+        'betas': (args.beta1, args.beta2),
+        'eps': args.epsilon,
+        'fused': True,
+    }
+
+    if model_args.mup:
 
         ## proxy model's configs
         base_dim = model_args.base_dim or int(model_args.base_head_dim * model_args.base_n_heads)
@@ -65,25 +71,10 @@ def get_optimizer(model, lr, weight_decay, adam_beta1, adam_beta2, opt_cls, trul
             model_args.ffn_dim_multiplier, 
             model_args.multiple_of
         )
-
-        def new_group():
-            new_g = {
-                'lr': lr,
-                'weight_decay': weight_decay,
-            }
-            new_g['params'] = []
-            return new_g
-        def new_group_():
-            new_g = {
-                'lr': lr,
-                'weight_decay': 0.,
-            }
-            new_g['params'] = []
-            return new_g
         
         matrix_like_p = defaultdict(new_group) # key is width_mult
         vector_like_p = new_group()
-        no_decay_vector_like_p = new_group_() # don't decay bias an layernorm
+        no_decay_group = new_group_() # don't decay bias an layernorm
 
         for n, p in model.named_parameters():
             if p.requires_grad:
@@ -91,7 +82,8 @@ def get_optimizer(model, lr, weight_decay, adam_beta1, adam_beta2, opt_cls, trul
                 if ('tok_embeddings' in n) or ('output' in n):
                     vector_like_p['params'].append(p)
                 elif any(ndnl in n for ndnl in no_decay_name_list):
-                    no_decay_vector_like_p['params'].append(p)
+                    print(f'{n} is in {no_decay_name_list}, so wd is set as 0')
+                    no_decay_group['params'].append(p)
                 else:
                     if 'wo' in n:
                         width_mult = dim/base_dim
@@ -117,21 +109,33 @@ def get_optimizer(model, lr, weight_decay, adam_beta1, adam_beta2, opt_cls, trul
         optimizer_grouped_parameters.extend(
             list(matrix_like_p.values()) 
             + [vector_like_p] 
-            + [no_decay_vector_like_p]
-        )
-        return opt_cls(
-            optimizer_grouped_parameters, 
-            **opt_kwargs,
+            + [no_decay_group]
         )
     else:
-        return opt_cls(
-            model.parameters(),
-            lr=lr,
-            betas=(adam_beta1, adam_beta2),
-            weight_decay=weight_decay if not truly_decoupled_wd else weight_decay/lr,
-            eps=1e-8,
-            fused=True,  # Faster optim.step but can throw errors
+
+        default_group = new_group()
+        no_decay_group = new_group_() # don't decay bias an layernorm
+
+        for n, p in model.named_parameters():
+            if p.requires_grad:
+                if any(ndnl in n for ndnl in no_decay_name_list):
+                    print(f'{n} is in {no_decay_name_list}, so wd is set as 0')
+                    no_decay_group['params'].append(p)
+                else:
+                    default_group['params'].append(p)
+
+        if truly_decoupled_wd:
+            default_group['weight_decay'] /= default_group['lr'] 
+
+        optimizer_grouped_parameters.extend(
+            [default_group] 
+            + [no_decay_group]
         )
+
+    return opt_cls(
+        optimizer_grouped_parameters, 
+        **opt_kwargs,
+    )
 
 def cov(x):
     '''Treat `x` as a collection of vectors and its Gram matrix.
@@ -252,7 +256,7 @@ def _record_coords(records, width, modulename, t,
         param_fdict = convert_fdict(param_fdict)
 
     def f(module, input, output):
-
+        
         def get_stat(d, x, fdict):
             if isinstance(x, (tuple, list)):
                 for i, _x in enumerate(x):

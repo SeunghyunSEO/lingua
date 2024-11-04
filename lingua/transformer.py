@@ -73,7 +73,71 @@ class BaseTransformerArgs:
     ########################################
     qk_norm: bool = False
     residual_post_norm: bool = False
+    tp_size: int = 1
 
+    ########################################
+    ngpt: bool = False
+
+########################################
+'''
+reproducing normalized GPT (nGPT)
+https://arxiv.org/abs/2410.01131
+
+https://github.com/lucidrains/nGPT-pytorch/blob/main/nGPT_pytorch/nTransformer.py
+https://github.com/alxndrTL/modded-nanogpt
+'''
+
+def exists(v):
+    return v is not None
+
+def default(v, d):
+    return v if exists(v) else d
+
+def l2_norm(
+    x, 
+    dim = -1, 
+    norm_eps = 0.0, 
+    eps = None
+):
+    if norm_eps == 0.0:
+        x = F.normalize(x, dim = dim, p = 2)
+    else:
+        eps = default(eps, 1e-5 if t.dtype == torch.float16 else 1e-10)
+        norm = x.norm(dim = dim, keepdim = True)
+        target_norm = norm.detach().clamp(min = 1.0 - norm_eps, max = 1.0 + norm_eps)
+        divisor = norm / target_norm
+        x = x / divisor.clamp(min = eps)
+    return x
+
+class Scaler(nn.Module):
+    def __init__(
+        self, 
+        dim: int, 
+        scale: float, 
+        scale_init: float = None
+    ):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(dim))
+        self.scale = scale
+        self.scale_init = scale_init
+
+    def forward(self, x: torch.Tensor, additional_scaler: float = 1.0):
+        x = (
+            x.float() \
+            * self.weight.float() \
+            * self.scale \
+            * additional_scaler
+        ).type_as(x)
+        return x
+
+    def reset_parameters(self):
+        # because model is wrapped with fsdp. directly modify param is not possible?
+        if self.scale_init:
+            torch.nn.init.normal_(self.weight, mean=self.scale_init, std=0.0)
+        else:
+            torch.nn.init.ones_(self.weight)
+        
+########################################
 
 def cross_entropy(pred, target, **kwargs):
     '''
@@ -371,18 +435,41 @@ class Attention(nn.Module):
             bias=False,
         )
 
+        self.d_model = int(n_heads * head_dim) 
+        self.kv_d_model = int(n_kv_heads * head_dim)
+        self.tp_size = self.args.tp_size ## for qknorm, oh but nheads are already divide in parallelize_llama module! 
+        
         if self.args.qk_norm:
-            # assert not args.query_zero_init, "query_zero_init and qk_norm is not compatible because weights will not be updated ?"
+            assert not self.args.ngpt
+            # should apply headwise like 
+            # https://github.com/huggingface/transformers/blob/f745e7d3f902601686b83c7cce2660c2a94509f0/src/transformers/models/cohere/modeling_cohere.py#L117-L131
+            # https://github.com/NVIDIA/Megatron-LM/blob/2e2bdf62382f3a77f5bd020cde51ed833ee62ead/megatron/core/transformer/attention.py#L634-L641
+            # TODO: for TP, expected shape of query and key tensor is [B, T, n_heads//tp_size, head_dim]
+
             norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
-            d_model = dim or int(n_heads * head_dim)
-            kv_d_model = int(n_kv_heads * head_dim)
-            self.q_norm = norm(d_model, eps=args.norm_eps)
-            self.k_norm = norm(kv_d_model, eps=args.norm_eps)
+            self.q_norm = norm(self.n_heads//self.tp_size * self.head_dim, eps=args.norm_eps)
+            self.k_norm = norm(self.n_kv_heads//self.tp_size * self.head_dim, eps=args.norm_eps)
+
+            ## TODO: there is fsdp bug it returns 0, 128 size tensor in distributed.py's sanity check routine
+            # self.q_norm = norm((self.n_heads//self.tp_size, self.head_dim), eps=args.norm_eps)
+            # self.k_norm = norm((self.n_kv_heads//self.tp_size, self.head_dim), eps=args.norm_eps)
 
         if self.args.residual_post_norm:
+            assert not self.args.ngpt
             norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
-            d_model = dim or int(n_heads * head_dim)
-            self.o_norm = norm(d_model, eps=args.norm_eps)
+            self.o_norm = norm(self.d_model, eps=args.norm_eps)
+
+        if self.args.ngpt:
+            # IIUC, qk scaling should be done by headwise (per head)
+            # but because it's not normalization operation, we can apply qk_scaler to hidden dim (3d input tensor)
+            # oops, because original paper didnt use GQA, they dont need to separate qk_scaler but we should if we want to apply per head
+
+            self.q_scaler = Scaler(dim=(self.n_heads//self.tp_size * self.head_dim), scale=self.d_model**-0.5)
+            self.k_scaler = Scaler(dim=(self.n_kv_heads//self.tp_size * self.head_dim), scale=self.d_model**-0.5)
+
+            ## TODO: there is fsdp bug. it returns 0, 128 size tensor in distributed.py's sanity check routine
+            # self.q_scaler = Scaler(dim=(self.n_heads//self.tp_size, self.head_dim), scale=self.d_model**-0.5)
+            # self.k_scaler = Scaler(dim=(self.n_kv_heads//self.tp_size, self.head_dim), scale=self.d_model**-0.5)
 
     def forward(
         self,
@@ -398,18 +485,6 @@ class Attention(nn.Module):
         xk = self.wk(x.view_as(x))
         xv = self.wv(x.view_as(x))
 
-        # ## check TP
-        # print(f'''
-        # bsz, seq_len, dim: {bsz, seq_len, dim}
-        # xq.size(): {xq.size()}
-        # xk.size(): {xk.size()}
-        # xv.size(): {xv.size()}
-        # ''')
-
-        if self.args.qk_norm:
-            xq = self.q_norm(xq)
-            xk = self.k_norm(xk)
-
         output_shape = xq.shape
         # B S D -> B S H D
         xq = xq.view(bsz, seq_len, self.n_heads, self.head_dim)
@@ -418,6 +493,56 @@ class Attention(nn.Module):
 
         xq, xk = apply_rotary_emb(xq, xk, 1, freq_cis[0:seq_len])
 
+        # ## for TP sanity check
+        # print(f'''
+        # self.tp_size: {self.tp_size}
+        # self.q_norm.weight.size(): {self.q_norm.weight.size()}
+        # self.k_norm.weight.size(): {self.k_norm.weight.size()}
+        # xq.size(): {xq.size()}
+        # xk.size(): {xk.size()}
+        # self.n_heads: {self.n_heads}
+        # self.n_kv_heads: {self.n_kv_heads}
+        # ''')
+        # '''
+        # self.tp_size: 2                                                                                                                                
+        # self.q_norm.weight.size(): torch.Size([256])                                                                                                   
+        # self.k_norm.weight.size(): torch.Size([128])                                                                                                   
+        # xq.size(): torch.Size([4, 4096, 2, 128])                                                                                                       
+        # xk.size(): torch.Size([4, 4096, 1, 128])                                                                                                       
+        # self.n_heads: 2                                                                                                                                
+        # self.n_kv_heads: 1   
+        # '''
+
+        ## headwise norm
+        if self.args.qk_norm:
+            # xq = self.q_norm(xq)
+            # xk = self.k_norm(xk)
+
+            ## TODO: currently we should do reshape and apply norm then reshape again because of fsdp bug
+            ## TODO: qk_norm should be applied for 4D input 
+            xq = self.q_norm(
+                xq.contiguous().view(bsz, seq_len, self.n_heads * self.head_dim) ## n_heads already discounted by tp_size in parallelize module
+            ).contiguous().view(bsz, seq_len, self.n_heads, self.head_dim)
+            xk = self.k_norm(
+                xk.contiguous().view(bsz, seq_len, self.n_kv_heads * self.head_dim) ## n_kv_heads already discounted by tp_size in parallelize module
+            ).contiguous().view(bsz, seq_len, self.n_kv_heads, self.head_dim)
+
+        ## headwise norm
+        if self.args.ngpt:
+            # i think we should apply scaler after RoPE ?
+            # but RoPE is just rotate input... idk it's important or not
+
+            # xq = self.q_scaler(l2_norm(xq))  # ngpt paper (15)
+            # xk = self.k_scaler(l2_norm(xk))  # ngpt paper (16)
+
+            ## TODO: currently we should do reshape and apply norm then reshape again because of fsdp bug
+            xq = self.q_scaler(
+                l2_norm(xq).contiguous().view(bsz, seq_len, self.n_heads * self.head_dim) ## n_heads already discounted by tp_size in parallelize module
+            ).contiguous().view(bsz, seq_len, self.n_heads, self.head_dim)  # ngpt paper (15)
+            xk = self.k_scaler(
+                l2_norm(xk).contiguous().view(bsz, seq_len, self.n_kv_heads * self.head_dim) ## n_kv_heads already discounted by tp_size in parallelize module
+            ).contiguous().view(bsz, seq_len, self.n_kv_heads, self.head_dim)  # ngpt paper (16)
+
         # This condition helps us be easily compatible
         # with inference by adding a pluggable KVCache
         if hasattr(self, "kv_cache"):
@@ -425,6 +550,14 @@ class Attention(nn.Module):
 
         xk = repeat_kv(xk, self.heads_per_group, dim=2)
         xv = repeat_kv(xv, self.heads_per_group, dim=2)
+
+        sdpa_scale = float(self.head_dim) ** -0.5
+        if (self.args.mup) or (self.args.ngpt):
+            assert attn_impl == "sdpa"
+            if self.args.mup:
+                sdpa_scale = float(self.head_dim) ** -1.0
+            elif self.args.ngpt:
+                sdpa_scale = float(self.head_dim) ** 0.5
 
         if attn_impl == "flex_attention":
             assert mask is None or isinstance(mask, BlockMask)
@@ -448,7 +581,7 @@ class Attention(nn.Module):
                 xv,
                 is_causal=is_causal,
                 attn_mask=mask,
-                scale=float(self.head_dim)**-1.0 if self.args.mup else float(self.head_dim)**-0.5 
+                scale=sdpa_scale
             )
             output = output.transpose(1, 2).contiguous()  # B H S D -> B S H D
         else:
@@ -498,9 +631,19 @@ class Attention(nn.Module):
                 b=3 * init_std *out_proj_scale,
             )
         else:
+            # init_std = init_std or (self.dim ** (-0.5))
+            # init_std = init_std / factor
+            # for w in [self.wq, self.wk, self.wv, self.wo]:
+            #     nn.init.trunc_normal_(
+            #         w.weight,
+            #         mean=0.0,
+            #         std=init_std,
+            #         a=-3 * init_std,
+            #         b=3 * init_std,
+            #     )
+
             init_std = init_std or (self.dim ** (-0.5))
-            init_std = init_std / factor
-            for w in [self.wq, self.wk, self.wv, self.wo]:
+            for w in [self.wq, self.wk, self.wv]:
                 nn.init.trunc_normal_(
                     w.weight,
                     mean=0.0,
@@ -508,12 +651,24 @@ class Attention(nn.Module):
                     a=-3 * init_std,
                     b=3 * init_std,
                 )
+            nn.init.trunc_normal_(
+                self.wo.weight,
+                mean=0.0,
+                std=init_std / factor,
+                a=-3 * init_std,
+                b=3 * init_std,
+            )
 
         if self.args.qk_norm:
             self.q_norm.reset_parameters()
             self.k_norm.reset_parameters()
+
         if self.args.residual_post_norm:
             self.o_norm.reset_parameters()
+
+        if self.args.ngpt:
+            self.q_scaler.reset_parameters()
+            self.k_scaler.reset_parameters()
 
 def adjust_hidden_dim(hidden_dim, ffn_dim_multiplier, multiple_of):
     '''
@@ -581,15 +736,26 @@ class FeedForward(nn.Module):
             bias=False,
         )
 
+        self.d_model = args.dim or int(args.n_heads * args.head_dim)
+
         if self.args.residual_post_norm:
+            assert not self.args.ngpt
             norm = FusedRMSNorm if args.fused_rms_norm else RMSNorm
-            d_model = args.dim or int(args.n_heads * args.head_dim)
-            self.fc2_norm = norm(d_model, eps=args.norm_eps)
+            self.fc2_norm = norm(self.d_model, eps=args.norm_eps)
+
+        if self.args.ngpt:
+            self.u_scaler = Scaler(hidden_dim, scale=1.0)
+            self.v_scaler = Scaler(hidden_dim, scale=1.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # B S D
         x1 = self.w1(x.view_as(x))
         x3 = self.w3(x.view_as(x))
+
+        if self.args.ngpt:
+            x3 = self.u_scaler(x3) # ngpt paper (20)
+            x1 = self.v_scaler(x1, additional_scaler = self.d_model ** 0.5) # ngpt paper (21)
+
         output = self.w2(F.silu(x1) * x3)
         if self.args.residual_post_norm:
             output = self.fc2_norm(output)
@@ -620,9 +786,29 @@ class FeedForward(nn.Module):
                 b=3 * out_init_std *out_proj_scale,
             )
         else:
+            # in_init_std = init_std or (self.dim ** (-0.5))
+            # out_init_std = init_std or (self.hidden_dim ** (-0.5))
+            # in_init_std = in_init_std / factor
+            # out_init_std = out_init_std / factor
+            # for w in [self.w1, self.w3]:
+            #     nn.init.trunc_normal_(
+            #         w.weight,
+            #         mean=0.0,
+            #         std=in_init_std,
+            #         a=-3 * in_init_std,
+            #         b=3 * in_init_std,
+            #     )
+            # nn.init.trunc_normal_(
+            #     self.w2.weight,
+            #     mean=0.0,
+            #     std=out_init_std,
+            #     a=-3 * out_init_std,
+            #     b=3 * out_init_std,
+            # )
+
             in_init_std = init_std or (self.dim ** (-0.5))
             out_init_std = init_std or (self.hidden_dim ** (-0.5))
-            in_init_std = in_init_std / factor
+            in_init_std = in_init_std
             out_init_std = out_init_std / factor
             for w in [self.w1, self.w3]:
                 nn.init.trunc_normal_(
@@ -643,6 +829,9 @@ class FeedForward(nn.Module):
         if self.args.residual_post_norm:
             self.fc2_norm.reset_parameters()
 
+        if self.args.ngpt:
+            self.u_scaler.reset_parameters()
+            self.v_scaler.reset_parameters()
 
 class TransformerBlock(nn.Module):
     def __init__(self, args: BaseTransformerArgs):
@@ -673,9 +862,14 @@ class TransformerBlock(nn.Module):
             multiple_of=args.multiple_of,
             ffn_dim_multiplier=args.ffn_dim_multiplier,
         )
-        norm = FusedRMSNorm if self.args.fused_rms_norm else RMSNorm
-        self.attention_norm = norm(d_model, eps=args.norm_eps)
-        self.ffn_norm = norm(d_model, eps=args.norm_eps)
+
+        if self.args.ngpt:
+            self.attention_scaler = Scaler(d_model, scale=d_model**-0.5, scale_init=0.05)
+            self.ffn_scaler = Scaler(d_model, scale=d_model**-0.5)
+        else:
+            norm = FusedRMSNorm if self.args.fused_rms_norm else RMSNorm
+            self.attention_norm = norm(d_model, eps=args.norm_eps)
+            self.ffn_norm = norm(d_model, eps=args.norm_eps)
 
     def forward(
         self,
@@ -686,23 +880,49 @@ class TransformerBlock(nn.Module):
         attn_impl: str = "sdpa",
     ) -> torch.Tensor:
 
-        h = x + self.attention(
-            self.attention_norm(x),
-            freq_cis,
-            tok_idx=tok_idx,
-            mask=mask,
-            attn_impl=attn_impl,
-        )
-        out = h + self.feed_forward(self.ffn_norm(h))
-        return out
+        if self.args.ngpt:
+            x = l2_norm(
+                x + self.attention_scaler(
+                    l2_norm(
+                        self.attention(
+                            x,
+                            freq_cis,
+                            tok_idx=tok_idx,
+                            mask=mask,
+                            attn_impl=attn_impl,
+                        )
+                    ) - x
+                )  # ngpt paper (10), table 1
+            )
+            x = l2_norm(
+                x + self.ffn_scaler(
+                    l2_norm(
+                        self.feed_forward(x)
+                    ) - x
+                )  # ngpt paper (11), table 1
+            )
+            return x
+        else:
+            h = x + self.attention(
+                self.attention_norm(x),
+                freq_cis,
+                tok_idx=tok_idx,
+                mask=mask,
+                attn_impl=attn_impl,
+            )
+            out = h + self.feed_forward(self.ffn_norm(h))
+            return out
 
     def init_weights(self, init_std=None, factor=1.0):
         self.attention.reset_parameters(init_std, factor)
-        self.attention_norm.reset_parameters()
-
         self.feed_forward.reset_parameters(init_std, factor)
-        self.ffn_norm.reset_parameters()
 
+        if self.args.ngpt:
+            self.attention_scaler.reset_parameters()
+            self.ffn_scaler.reset_parameters()
+        else:
+            self.attention_norm.reset_parameters()
+            self.ffn_norm.reset_parameters()
 
 
 class BaseTransformer(nn.Module):
@@ -718,6 +938,10 @@ class BaseTransformer(nn.Module):
             head_dim=args.head_dim or int(args.dim // args.n_heads),
             max_seqlen=args.max_seqlen,
         )
+
+        if self.args.ngpt:
+            assert not self.args.qk_norm, "ngpt already normalized qk"
+            assert not self.args.residual_post_norm, "ngpt already normalized residual output"
 
         self.layers = nn.ModuleList()
         for _ in range(args.n_layers):

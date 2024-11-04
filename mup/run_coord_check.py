@@ -35,6 +35,7 @@ def get_lazy_model(
     gqa=False,
     mup=True, readout_zero_init=True, query_zero_init=True, 
     qk_norm=False, residual_post_norm=False,
+    ngpt=False,
     vary_nhead=False,
     init_std=0.02, input_mult=1, output_mult=1,
 ):
@@ -61,6 +62,8 @@ def get_lazy_model(
 
             'qk_norm': qk_norm,
             'residual_post_norm': residual_post_norm,
+
+            'ngpt': ngpt,
             
             # 'fused_rms_norm': True,
         }
@@ -82,8 +85,6 @@ def get_lazy_model(
             }
             base_args.update(mup_args)
 
-        print(base_args)
-
         return LMTransformer(args=LMTransformerArgs(**base_args))
     
     return f
@@ -96,6 +97,7 @@ def plot_coord_check(
     init_std=0.02, input_mult=10.0, output_mult=1.0,
     readout_zero_init=True, query_zero_init=True,
     qk_norm=False, residual_post_norm=False,
+    ngpt=False,
     weight_decay=0.1, adam_beta1=0.9, adam_beta2=0.95,
     lr=None,
     **get_coord_data_kw
@@ -130,6 +132,7 @@ def plot_coord_check(
             mup=mup, vary_nhead=vary_nhead,
             readout_zero_init=readout_zero_init, query_zero_init=query_zero_init,
             qk_norm=qk_norm, residual_post_norm=residual_post_norm,
+            ngpt=ngpt,
             init_std=init_std, input_mult=input_mult, output_mult=output_mult,
         ) for (width, nhead, kv_nhead) in hiddens
     }
@@ -149,9 +152,10 @@ def plot_coord_check(
 
     save_dir = 'exp_logs/assets/images/mup_native_coord_check'
     os.makedirs(save_dir, exist_ok=True)
-    suffix = ''
+    suffix = '_'
     save_file_name = f'{parameterization}_varying_{width}_gqa_{gqa}_basestd_{init_std}_inputmult_{input_mult}_outputmult_{output_mult}_lr_{lr}'
     save_file_name += f'_qk_norm_{qk_norm}_residual_post_norm_{residual_post_norm}'
+    save_file_name += f'_ngpt_{ngpt}'
     save_file_name += f'_{optimizer}_wd_{weight_decay}_b1_{adam_beta1}_b2_{adam_beta2}'
     save_file_name += f'{suffix}'
 

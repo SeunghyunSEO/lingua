@@ -12,14 +12,6 @@ from torch.optim import AdamW, lr_scheduler
 logger = logging.getLogger()
 
 
-# https://github.com/allenai/OLMo/blob/main/olmo/train.py#L115
-@dataclass
-class LRMonitor:
-    optim: torch.optim.Optimizer
-    def check(self):
-        lrs = [group["lr"] for group in self.optim.param_groups]
-        return {f"lr_group{idx}": lr for idx, lr in enumerate(lrs)}
-
 @dataclass
 class OptimArgs:
     lr: float = 3e-4
@@ -121,14 +113,30 @@ def get_optimizer(model, args, model_args):
     if truly_decoupled_wd:
         assert (group['weight_decay'] < 0.001), f"weight_decay value ({weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
 
-    if model_args.mup:
-        no_decay_name_list = ["bias", "norm"]
-        optimizer_grouped_parameters = []
-        opt_kwargs = {
-            'betas': (args.beta1, args.beta2),
-            'eps': args.epsilon,
-            'fused': True,
+    def new_group():
+        new_g = {
+            'lr': args.lr,
+            'weight_decay': args.weight_decay,
         }
+        new_g['params'] = []
+        return new_g
+    def new_group_():
+        new_g = {
+            'lr': args.lr,
+            'weight_decay': 0.,
+        }
+        new_g['params'] = []
+        return new_g
+
+    no_decay_name_list = ["bias", "norm", "scaler"]
+    optimizer_grouped_parameters = []
+    opt_kwargs = {
+        'betas': (args.beta1, args.beta2),
+        'eps': args.epsilon,
+        'fused': True,
+    }
+
+    if model_args.mup:
 
         ## proxy model's configs
         base_dim = model_args.base_dim or int(model_args.base_head_dim * model_args.base_n_heads)
@@ -147,25 +155,10 @@ def get_optimizer(model, args, model_args):
             model_args.ffn_dim_multiplier, 
             model_args.multiple_of
         )
-
-        def new_group():
-            new_g = {
-                'lr': args.lr,
-                'weight_decay': args.weight_decay,
-            }
-            new_g['params'] = []
-            return new_g
-        def new_group_():
-            new_g = {
-                'lr': args.lr,
-                'weight_decay': 0.,
-            }
-            new_g['params'] = []
-            return new_g
         
         matrix_like_p = defaultdict(new_group) # key is width_mult
         vector_like_p = new_group()
-        no_decay_vector_like_p = new_group_() # don't decay bias an layernorm
+        no_decay_group = new_group_() # don't decay bias an layernorm
 
         for n, p in model.named_parameters():
             if p.requires_grad:
@@ -173,7 +166,8 @@ def get_optimizer(model, args, model_args):
                 if ('tok_embeddings' in n) or ('output' in n):
                     vector_like_p['params'].append(p)
                 elif any(ndnl in n for ndnl in no_decay_name_list):
-                    no_decay_vector_like_p['params'].append(p)
+                    print(f'{n} is in {no_decay_name_list}, so wd is set as 0')
+                    no_decay_group['params'].append(p)
                 else:
                     if 'wo' in n:
                         width_mult = dim/base_dim
@@ -199,21 +193,33 @@ def get_optimizer(model, args, model_args):
         optimizer_grouped_parameters.extend(
             list(matrix_like_p.values()) 
             + [vector_like_p] 
-            + [no_decay_vector_like_p]
-        )
-        return opt_cls(
-            optimizer_grouped_parameters, 
-            **opt_kwargs,
+            + [no_decay_group]
         )
     else:
-        return opt_cls(
-            model.parameters(),
-            lr=args.lr,
-            betas=(args.beta1, args.beta2),
-            weight_decay=args.weight_decay if not truly_decoupled_wd else args.weight_decay/args.lr,
-            eps=args.epsilon,
-            fused=True,  # Faster optim.step but can throw errors
+
+        default_group = new_group()
+        no_decay_group = new_group_() # don't decay bias an layernorm
+
+        for n, p in model.named_parameters():
+            if p.requires_grad:
+                if any(ndnl in n for ndnl in no_decay_name_list):
+                    print(f'{n} is in {no_decay_name_list}, so wd is set as 0')
+                    no_decay_group['params'].append(p)
+                else:
+                    default_group['params'].append(p)
+
+        if truly_decoupled_wd:
+            default_group['weight_decay'] /= default_group['lr'] 
+
+        optimizer_grouped_parameters.extend(
+            [default_group] 
+            + [no_decay_group]
         )
+
+    return opt_cls(
+        optimizer_grouped_parameters, 
+        **opt_kwargs,
+    )
 
 def build_optimizer(model: nn.Module, args: OptimArgs, n_steps: int, model_args):
     logger.info("Starting build of optimizer...")

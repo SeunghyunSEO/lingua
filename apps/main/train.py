@@ -53,7 +53,7 @@ from lingua.metrics import (
     MetricLogger,
     get_num_params,
 )
-from lingua.optim import OptimArgs, build_optimizer, LRMonitor
+from lingua.optim import OptimArgs, build_optimizer
 from lingua.profiling import ProfilerArgs, maybe_run_profiler
 from lingua.tokenizer import build_tokenizer
 from apps.main.transformer import (
@@ -255,6 +255,10 @@ def train(args: TrainArgs):
         logger.info(f"Building model")
 
         # Initializing Model in meta device allows us to initialize models much bigger than 1 gpu's memory
+        if args.model.init_base_std == 0.0:
+            args.model.init_base_std = None
+        if args.distributed.tp_size != 1:
+            args.model.tp_size = args.distributed.tp_size
         with torch.device("meta"):
             model = LMTransformer(args.model)
         logger.info(f"Model is built !")
@@ -299,8 +303,10 @@ def train(args: TrainArgs):
         logger.info(f"GPU memory usage: {gpu_memory_monitor}")
 
         # build optimizer after apply parallelisms to the model
+        if args.model.ngpt:
+            assert args.optim.weight_decay == 0.0
+            assert args.optim.warmup == 0
         optimizer, scheduler = build_optimizer(model, args.optim, args.steps, args.model)
-        # lr_monitor = LRMonitor(optimizer)
 
         data_loader_state = init_dataloader_state_from_args(
             args.data, dp_rank, dp_degree

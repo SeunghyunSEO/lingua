@@ -22,6 +22,7 @@ from lingua.transformer import (
     BaseTransformerArgs,
     RMSNorm,
     cross_entropy,
+    Scaler,
 )
 from fused_kernels.fused_rms_norm import FusedRMSNorm
 from fused_kernels.fused_ce import fused_cross_entropy
@@ -85,9 +86,6 @@ class LMTransformer(BaseTransformer):
         d_model = args.dim or int(args.n_heads * args.head_dim)
         self.tok_embeddings = torch.nn.Embedding(args.vocab_size, d_model)
 
-        norm = FusedRMSNorm if self.args.fused_rms_norm else RMSNorm
-        self.norm = norm(d_model, eps=args.norm_eps)
-
         self.output = nn.Linear(
             d_model,
             args.vocab_size,
@@ -96,6 +94,12 @@ class LMTransformer(BaseTransformer):
 
         if args.weight_tying:
             self.output.weight = self.embeddings.tok_embeddings.weight
+
+        if args.ngpt:
+            self.logit_scaler = Scaler(args.vocab_size, scale=d_model**-0.5)
+        else:
+            norm = FusedRMSNorm if self.args.fused_rms_norm else RMSNorm
+            self.norm = norm(d_model, eps=args.norm_eps)
 
         self.init_weights()
 
@@ -133,12 +137,23 @@ class LMTransformer(BaseTransformer):
             # raise NotImplementedError("currently not supported because of Dtensor")
             assert target is not None, "fused ce need target because it does not materialize logit to save VRAM memory"
             assert h.size(1) == target.size(1)
-            h = scale_ * self.norm(h).float()
+            if not self.args.ngpt:
+                h = self.norm(h).float()
+            else:
+                raise NotImplementedError
+            h = scale_ * h
             h = h.contiguous().view(-1, h.size(-1))
             target = target.contiguous().view(-1)
+
             return fused_cross_entropy(h, self.output.weight, target)
+
         else:
-            logits = self.output(scale_ * self.norm(h)).float()
+            if not self.args.ngpt:
+                h = self.norm(h)
+            logits = self.output(scale_ * h).float()
+            if self.args.ngpt:
+                logits = self.logit_scaler(logits)
+
             if target is not None:
                 return cross_entropy(logits, target)
             else:
@@ -146,8 +161,11 @@ class LMTransformer(BaseTransformer):
 
     def reset_parameters(self, init_std=None):
         # Either use fixed base std or sqrt model dim
-        super().reset_parameters()
-        self.norm.reset_parameters()
+        super().reset_parameters() # rope init
+        if self.args.ngpt:
+            self.logit_scaler.reset_parameters()
+        else:
+            self.norm.reset_parameters()
 
         if self.args.mup:
             assert init_std is not None
@@ -280,6 +298,7 @@ def tp_parallelize(model, tp_mesh, model_args: LMTransformerArgs, distributed_ar
             "attention.wq": colwise_parallel(),
             "attention.wk": colwise_parallel(),
             "attention.wv": colwise_parallel(),
+            # "attention.wo": rowwise_parallel(output_layouts=Shard(1)),
             "attention.wo": rowwise_parallel(output_layouts=Shard(1)),
             "ffn_norm": SequenceParallel(),
             "feed_forward": prepare_module_input(
@@ -291,13 +310,13 @@ def tp_parallelize(model, tp_mesh, model_args: LMTransformerArgs, distributed_ar
             "feed_forward.w3": colwise_parallel(),
         }
         
-        # should be splitted across time dimension like other norms
-        if model_args.qk_norm:
-            layer_plan["attention.q_norm"]: SequenceParallel()
-            layer_plan["attention.k_norm"]: SequenceParallel()
-        if model_args.residual_post_norm:
-            layer_plan["attention.o_norm"]: SequenceParallel()
-            layer_plan["feed_forward.fc2_norm"]: SequenceParallel()
+        ## TODO: should be splitted across time dimension like other norms ??? but we should modify o_proj, ffn2 so much
+        # if model_args.qk_norm:
+        #     layer_plan["attention.q_norm"]: SequenceParallel()
+        #     layer_plan["attention.k_norm"]: SequenceParallel()
+        # if model_args.residual_post_norm:
+        #     layer_plan["attention.o_norm"]: SequenceParallel()
+        #     layer_plan["feed_forward.fc2_norm"]: SequenceParallel()
 
         parallelize_module(
             module=layer,

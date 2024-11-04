@@ -144,11 +144,18 @@ args = {
     'gqa': True, # if GQA is set true, num kv_head is 4 times small than num q_head
     # 'gqa': False,
 
-    'qk_norm': True,
-    # 'qk_norm': False,
-    'residual_post_norm': True,
-    # 'residual_post_norm': False,
+    # 'qk_norm': True,
+    'qk_norm': False,
+    # 'residual_post_norm': True,
+    'residual_post_norm': False,
 }
+
+## for nGPT
+args['mup'] = False
+args['qk_norm'] = False
+args['residual_post_norm'] = False
+args['ngpt'] = True
+
 opt_args = {
     'weight_decay': 0.01, 
     'adam_beta1': 0.9, 
@@ -192,6 +199,8 @@ export DP_SHARD_DEGREE=1
 export TP_DEGREE=1
 export FSDP_TYPE=no_shard
 
+export MUP=true
+export INIT_STD_FACTOR=global_depth
 export INIT_BASE_STD=0.04419 # 1/sqrt(512)
 # export INIT_BASE_STD=0.0883 # 1/sqrt(128)
 
@@ -205,10 +214,23 @@ export N_HEADS_=(4 8 16)
 export WEIGHT_DECAY=0.0
 export TRULY_DECOUPLED_WD=false
 
-# export QK_NORM=false
-# export RES_POST_NORM=false
-export QK_NORM=true
-export RES_POST_NORM=true
+############################################################
+export QK_NORM=false
+# export QK_NORM=true
+export RES_POST_NORM=false
+# export RES_POST_NORM=true
+
+############################################################
+# export NGPT=false
+export NGPT=true
+export QK_NORM=false
+export RES_POST_NORM=false
+export MUP=false
+export INIT_BASE_STD=0 # 1/sqrt(d_model)
+export INIT_STD_FACTOR=global_depth
+export WARMUP=0
+export WEIGHT_DECAY=0.0
+############################################################
 
 export STEPS=20
 export WARMUP=0
@@ -217,7 +239,7 @@ export ACCUM=1
 
 export PROBE_FREQ=1
 export PROBE_WANDB=true
-export PROFILING_RUN=true
+export PROFILING_RUN=false
 
 export LR=0.01
 
@@ -225,14 +247,16 @@ SUFFIX=''
 
 ############################################################
 export CONFIG=llama_8B_proxy
-export WANDB_PROJECT_NAME="lingua"
+export WANDB_PROJECT_NAME="lingua_sanity_check"
 for N_HEADS in "${N_HEADS_[@]}"; do
 
-    # export N_KV_HEADS=$((N_HEADS / 4))
+    export N_HEADS=$N_HEADS
     export N_KV_HEADS=$N_HEADS
+    # export N_KV_HEADS=$((N_HEADS / 4))
 
-    WANDB_EXP_NAME="coord_check_mup_proxy_nhead_${N_HEADS}_nkvhead_${N_KV_HEADS}_basenhead_${BASE_N_HEADS}_basenkvhead_${BASE_N_KV_HEADS}"
+    WANDB_EXP_NAME="mup_coord_check_${MUP}_nhead_${N_HEADS}_nkvhead_${N_KV_HEADS}_basenhead_${BASE_N_HEADS}_basenkvhead_${BASE_N_KV_HEADS}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_qknorm_${QK_NORM}_resnorm_${RES_POST_NORM}"
+     WANDB_EXP_NAME="${WANDB_EXP_NAME}_ngpt_${NGPT}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}${SUFFIX}"
     export WANDB_EXP_NAME=$WANDB_EXP_NAME
     export DUMP_DIR="exp_logs/assets/logs/${WANDB_EXP_NAME}"
@@ -267,19 +291,20 @@ done
 export COMPILE=true
 # export COMPILE=false
 
-export DP_DEGREE=8
-export DP_SHARD_DEGREE=1
-export TP_DEGREE=1
-
-# export DP_DEGREE=2
-# export DP_SHARD_DEGREE=4
+# export DP_DEGREE=8
+# export DP_SHARD_DEGREE=1
 # export TP_DEGREE=1
+
+export DP_DEGREE=2
+export DP_SHARD_DEGREE=4
+export TP_DEGREE=1
 
 # export DP_DEGREE=1
 # export DP_SHARD_DEGREE=8
 # export TP_DEGREE=1
 
 ############################################################
+# ## for TP sanity check
 # export DP_DEGREE=4
 # export DP_SHARD_DEGREE=1
 # export TP_DEGREE=2
@@ -289,15 +314,18 @@ export FSDP_TYPE=full_shard
 # export FSDP_TYPE=no_shard
 
 ############################################################
+export MUP=true
+export INIT_STD_FACTOR=global_depth
 export INIT_BASE_STD=0.04419 # 1/sqrt(512)
 # export INIT_BASE_STD=0.0883 # 1/sqrt(128)
+
 export BASE_N_HEADS=4
 export BASE_N_KV_HEADS=1
 
-export N_HEADS=4
-export N_KV_HEADS=1
-# export N_HEADS=8
-# export N_KV_HEADS=2
+# export N_HEADS=4
+# export N_KV_HEADS=1
+export N_HEADS=8
+export N_KV_HEADS=2
 # export N_HEADS=16
 # export N_KV_HEADS=4
 # export N_HEADS=32
@@ -308,26 +336,39 @@ export WEIGHT_DECAY=0.1
 export TRULY_DECOUPLED_WD=false
 
 ############################################################
-export QK_NORM=false
-export RES_POST_NORM=false
-
-############################################################
 export STEPS=40000 # 4*4096*8*40000=5.24B tokens
 export WARMUP=1000
 export BSZ=4
 export ACCUM=1
 
 ############################################################
+# export QK_NORM=false
+export QK_NORM=true
+
+# export RES_POST_NORM=false
+export RES_POST_NORM=true
+
+############################################################
+export NGPT=false
+
+# export NGPT=true
+# export QK_NORM=false
+# export RES_POST_NORM=false
+# export MUP=false
+# export INIT_BASE_STD=0 # 1/sqrt(d_model)
+# export INIT_STD_FACTOR=global_depth
+# export WARMUP=0
+# export WEIGHT_DECAY=0.0
+
+############################################################
 export PROBE_FREQ=100
 export PROBE_WANDB=true
 export PROFILING_RUN=false
 
-# export PROBE_FREQ=none
-# export PROBE_WANDB=false
-# export PROFILING_RUN=false
-
 ############################################################
+# LRS=(0.00391)
 # LRS=(0.00195)
+# LRS=(0.00098 0.00195 0.00781)
 LRS=( # low resolution sweep / 2^-13 ~ 2^-4
         0.000061 0.000122 0.00024 0.00049
         0.00098 0.00195
@@ -346,11 +387,12 @@ export CONFIG=llama_8B_proxy
 export WANDB_PROJECT_NAME="lingua"
 for LR in "${LRS[@]}"; do
     export LR=$LR
-    WANDB_EXP_NAME="mup_proxy_nhead_${N_HEADS}_nkvhead_${N_KV_HEADS}_basenhead_${BASE_N_HEADS}_basenkvhead_${BASE_N_KV_HEADS}"
+    WANDB_EXP_NAME="mup_${MUP}_nhead_${N_HEADS}_nkvhead_${N_KV_HEADS}_basenhead_${BASE_N_HEADS}_basenkvhead_${BASE_N_KV_HEADS}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_world_${WORLD_SIZE}_DP_${DP_DEGREE}_SHARD_${DP_SHARD_DEGREE}_TP_${TP_DEGREE}_fsdp_${FSDP_TYPE}_compile_${COMPILE}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_step_${STEPS}_warmup_${WARMUP}_bsz_${BSZ}_accum_${ACCUM}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_lr_${LR}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_qknorm_${QK_NORM}_resnorm_${RES_POST_NORM}"
+    WANDB_EXP_NAME="${WANDB_EXP_NAME}_ngpt_${NGPT}_wd_${WEIGHT_DECAY}"
     export WANDB_EXP_NAME=$WANDB_EXP_NAME
     export DUMP_DIR="exp_logs/assets/logs/${WANDB_EXP_NAME}"
 

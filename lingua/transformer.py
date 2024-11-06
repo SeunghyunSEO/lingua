@@ -78,6 +78,9 @@ class BaseTransformerArgs:
     ########################################
     ngpt: bool = False
 
+    ########################################
+    use_moe: bool = False
+
 ########################################
 '''
 reproducing normalized GPT (nGPT)
@@ -610,54 +613,29 @@ class Attention(nn.Module):
             out_proj_scale = float(self.dim/base_dim) ** -0.5
 
             out_proj_scale /= factor
-
-            for w in [self.wq, self.wk, self.wv]:
-                nn.init.trunc_normal_(
-                    w.weight,
-                    mean=0.0,
-                    std=init_std *in_proj_scale,
-                    a=-3 * init_std *in_proj_scale,
-                    b=3 * init_std *in_proj_scale,
-                )
-            if self.args.query_zero_init:
-                nn.init.zeros_(self.wq.weight)
-                # self.wq.weight.data.zero_()
-            
-            nn.init.trunc_normal_(
-                self.wo.weight,
-                mean=0.0,
-                std=init_std *out_proj_scale,
-                a=-3 * init_std *out_proj_scale,
-                b=3 * init_std *out_proj_scale,
-            )
         else:
-            # init_std = init_std or (self.dim ** (-0.5))
-            # init_std = init_std / factor
-            # for w in [self.wq, self.wk, self.wv, self.wo]:
-            #     nn.init.trunc_normal_(
-            #         w.weight,
-            #         mean=0.0,
-            #         std=init_std,
-            #         a=-3 * init_std,
-            #         b=3 * init_std,
-            #     )
+            in_proj_scale = 1.0
+            out_proj_scale = 1.0
 
-            init_std = init_std or (self.dim ** (-0.5))
-            for w in [self.wq, self.wk, self.wv]:
-                nn.init.trunc_normal_(
-                    w.weight,
-                    mean=0.0,
-                    std=init_std,
-                    a=-3 * init_std,
-                    b=3 * init_std,
-                )
+        for w in [self.wq, self.wk, self.wv]:
             nn.init.trunc_normal_(
-                self.wo.weight,
+                w.weight,
                 mean=0.0,
-                std=init_std / factor,
-                a=-3 * init_std,
-                b=3 * init_std,
+                std=init_std *in_proj_scale,
+                a=-3 * init_std *in_proj_scale,
+                b=3 * init_std *in_proj_scale,
             )
+        if self.args.query_zero_init:
+            nn.init.zeros_(self.wq.weight)
+            # self.wq.weight.data.zero_()
+        
+        nn.init.trunc_normal_(
+            self.wo.weight,
+            mean=0.0,
+            std=init_std *out_proj_scale,
+            a=-3 * init_std *out_proj_scale,
+            b=3 * init_std *out_proj_scale,
+        )
 
         if self.args.qk_norm:
             self.q_norm.reset_parameters()
@@ -687,6 +665,29 @@ def adjust_hidden_dim(hidden_dim, ffn_dim_multiplier, multiple_of):
         hidden_dim = int(ffn_dim_multiplier * hidden_dim)
     hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
     return hidden_dim
+
+def get_moe_args(
+    args, 
+    hidden_size, 
+    moe_top_k,
+    moe_normalize_expert_weights,
+    device,
+):
+    from functools import partial
+    common_args = {
+        'hidden_size': hidden_size,
+        'ffn_hidden_size': hidden_size,
+        'moe_top_k': moe_top_k,
+        'activation_fn': partial(F.gelu, approximate='none'),
+        'moe_jitter_eps': 0.0,  # Disable randomiztion
+        'moe_normalize_expert_weights': moe_normalize_expert_weights,
+        'uniform_expert_assignment': False,
+        'bias': False,
+        'device': device,
+        'moe_num_experts': 32,
+        'mlp_type': 'glu',
+    }
+    return common_args
 
 class FeedForward(nn.Module):
     def __init__(
@@ -720,21 +721,31 @@ class FeedForward(nn.Module):
             assert base_hidden_dim % mp_size == 0
             self.base_hidden_dim = base_hidden_dim
 
-        self.w1 = nn.Linear(
-            dim,
-            hidden_dim,
-            bias=False,
-        )
-        self.w3 = nn.Linear(
-            dim,
-            hidden_dim,
-            bias=False,
-        )
-        self.w2 = nn.Linear(
-            hidden_dim,
-            dim,
-            bias=False,
-        )
+        if self.args.use_moe:
+            raise NotImplementedError
+            try:
+                from megablocks.layers.dmoe import dMoE
+                from megablocks.layers.moe import MoE
+            except ImportError:
+                raise ImportError("pip install megablocks==0.6.1")
+            self.moe_args = None
+            self.moe = dMoE(self.moe_args) if self.config.moe_dropless else MoE(self.moe_args)
+        else:
+            self.w1 = nn.Linear(
+                dim,
+                hidden_dim,
+                bias=False,
+            )
+            self.w3 = nn.Linear(
+                dim,
+                hidden_dim,
+                bias=False,
+            )
+            self.w2 = nn.Linear(
+                hidden_dim,
+                dim,
+                bias=False,
+            )
 
         self.d_model = args.dim or int(args.n_heads * args.head_dim)
 
@@ -748,28 +759,73 @@ class FeedForward(nn.Module):
             self.v_scaler = Scaler(hidden_dim, scale=1.0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # B S D
-        x1 = self.w1(x.view_as(x))
-        x3 = self.w3(x.view_as(x))
 
-        if self.args.ngpt:
-            x3 = self.u_scaler(x3) # ngpt paper (20)
-            x1 = self.v_scaler(x1, additional_scaler = self.d_model ** 0.5) # ngpt paper (21)
+        if self.args.moe:
+            output = self.moe(x)
+            
+        else:
+            # B S D
+            x1 = self.w1(x.view_as(x))
+            x3 = self.w3(x.view_as(x))
 
-        output = self.w2(F.silu(x1) * x3)
-        if self.args.residual_post_norm:
-            output = self.fc2_norm(output)
+
+            if self.args.ngpt:
+                x3 = self.u_scaler(x3) # ngpt paper (20)
+                x1 = self.v_scaler(x1, additional_scaler = self.d_model ** 0.5) # ngpt paper (21)
+
+            output = self.w2(F.silu(x1) * x3)
+            if self.args.residual_post_norm:
+                output = self.fc2_norm(output)
+
         return output
 
     def reset_parameters(self, init_std=None, factor=1.0):
+
         if self.args.mup:
             assert init_std is not None
             assert InitStdFactor(self.args.init_std_factor) in [InitStdFactor.GLOBAL_DEPTH, InitStdFactor.CURRENT_DEPTH]
             in_init_std = init_std
             out_init_std = init_std * (self.base_hidden_dim/self.base_dim) ** -0.5 # e.g. intermediate dim is 4 times larger
+
             in_proj_scale = float(self.dim/self.base_dim) ** -0.5
             out_proj_scale = float(self.hidden_dim/self.base_hidden_dim) ** -0.5
             out_proj_scale /= factor # discount residual branch
+
+        else:
+            in_init_std = init_std or (self.dim ** (-0.5))
+            out_init_std = init_std or (self.hidden_dim ** (-0.5))
+            in_init_std = in_init_std
+            out_init_std = out_init_std
+
+            in_proj_scale = 1.0
+            out_proj_scale = factor**-1
+            
+        if self.args.use_moe:
+
+            ## ffn in, GLU or not
+            for w in [self.moe.experts.mlp.w1, self.moe.experts.mlp.v1, self.moe.router.layer]:
+                nn.init.trunc_normal_(
+                    w, 
+                    mean=0.0,
+                    std=in_init_std *in_proj_scale, 
+                    a=-3 * in_init_std *in_proj_scale,
+                    b=3 * in_init_std *in_proj_scale,
+                )
+
+            ## out proj
+            nn.init.trunc_normal_(
+                self.moe.experts.mlp.w,
+                mean=0.0,
+                std=out_init_std *out_proj_scale,
+                a=-3 * out_init_std *out_proj_scale,
+                b=3 * out_init_std *out_proj_scale,
+            )
+
+            ## bias
+            if self.moe.experts.bias is not None:
+                torch.nn.init.zeros_(self.moe.experts.bias)
+                
+        else:
             for w in [self.w1, self.w3]:
                 nn.init.trunc_normal_(
                     w.weight,
@@ -784,46 +840,6 @@ class FeedForward(nn.Module):
                 std=out_init_std *out_proj_scale,
                 a=-3 * out_init_std *out_proj_scale,
                 b=3 * out_init_std *out_proj_scale,
-            )
-        else:
-            # in_init_std = init_std or (self.dim ** (-0.5))
-            # out_init_std = init_std or (self.hidden_dim ** (-0.5))
-            # in_init_std = in_init_std / factor
-            # out_init_std = out_init_std / factor
-            # for w in [self.w1, self.w3]:
-            #     nn.init.trunc_normal_(
-            #         w.weight,
-            #         mean=0.0,
-            #         std=in_init_std,
-            #         a=-3 * in_init_std,
-            #         b=3 * in_init_std,
-            #     )
-            # nn.init.trunc_normal_(
-            #     self.w2.weight,
-            #     mean=0.0,
-            #     std=out_init_std,
-            #     a=-3 * out_init_std,
-            #     b=3 * out_init_std,
-            # )
-
-            in_init_std = init_std or (self.dim ** (-0.5))
-            out_init_std = init_std or (self.hidden_dim ** (-0.5))
-            in_init_std = in_init_std
-            out_init_std = out_init_std / factor
-            for w in [self.w1, self.w3]:
-                nn.init.trunc_normal_(
-                    w.weight,
-                    mean=0.0,
-                    std=in_init_std,
-                    a=-3 * in_init_std,
-                    b=3 * in_init_std,
-                )
-            nn.init.trunc_normal_(
-                self.w2.weight,
-                mean=0.0,
-                std=out_init_std,
-                a=-3 * out_init_std,
-                b=3 * out_init_std,
             )
 
         if self.args.residual_post_norm:

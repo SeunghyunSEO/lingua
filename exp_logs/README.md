@@ -14,6 +14,7 @@
 - [ ] enabling dmoe in trainer
     - [x] test dmoe with parallelism
     - [ ] with fsdp
+    - [ ] implement EP with fsdp
 - [ ] enabling dist shampoo in trainer
     - [x] with fsdp
 
@@ -302,12 +303,12 @@ export BASE_N_KV_HEADS=1
 
 # export N_HEADS=4
 # export N_KV_HEADS=1
-# export N_HEADS=8
-# export N_KV_HEADS=2
+export N_HEADS=8
+export N_KV_HEADS=2
 # export N_HEADS=16
 # export N_KV_HEADS=4
-export N_HEADS=32
-export N_KV_HEADS=8
+# export N_HEADS=32
+# export N_KV_HEADS=8
 
 ############################################################
 export STEPS=40000 # 4*4096*8*40000=5.24B tokens
@@ -406,7 +407,7 @@ export PROFILING_RUN=false
 #         0.00024 0.00049
 #         0.00098 0.00195
 #         0.00391 0.00781
-#         0.01562
+#         0.01562 0.03125
 # )
 LRS=( # narrow range (only basin)
     0.00098 0.00195

@@ -24,7 +24,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.distributed._tensor.device_mesh import init_device_mesh
+# from torch.distributed._tensor.device_mesh import init_device_mesh
 from torch.distributed.device_mesh import init_device_mesh
 from torch.distributed._tensor import DeviceMesh, DTensor, Placement, Shard, Replicate
 from torch.distributed import ProcessGroup
@@ -76,6 +76,7 @@ def test_dmoe(
     moe_normalize_expert_weights: Union[float, int] = 1.0,
     two_d_input: bool = False,
     use_fsdp: bool = False,
+    use_only_fsdp: bool = False,
 ):
     ## init
     assert is_megablocks_imported, "you should install megablocks for comparison"
@@ -99,8 +100,12 @@ def test_dmoe(
         input_shape = [batch_size * seq_len, hidden_size]
     else:
         input_shape = [batch_size, seq_len, hidden_size]
-    fp16 = False
-    bf16 = True
+
+    from torch.distributed._composable.fsdp import fully_shard, MixedPrecisionPolicy
+    param_dtype, reduce_dtype = torch.bfloat16, torch.float32
+    fp16, bf16 = False, True
+    mp_policy = MixedPrecisionPolicy(param_dtype=param_dtype, reduce_dtype=reduce_dtype)
+
     dtype = _get_torch_dtype(fp16, bf16)
     x = _get_all_inputs(input_shape, dtype)[rank]
 
@@ -122,14 +127,20 @@ def test_dmoe(
     if use_fsdp:
         torch_dmoe_mesh = init_device_mesh(
             "cuda", 
-            (world_size), 
-            mesh_dim_names=("fsdp"),
+            (world_size,), 
+            mesh_dim_names=("fsdp",),
         )
-        torch_dmoe = FSDP(
-            torch_dmoe, 
-            device_mesh=torch_dmoe_mesh, 
-        )
+        # ## FSDP 1
+        # torch_dmoe = FSDP(
+        #     torch_dmoe, 
+        #     device_mesh=torch_dmoe_mesh["fsdp"], 
+        # )
+        ## FSDP 2
+        fsdp_config = {"mesh": torch_dmoe_mesh["fsdp"], "mp_policy": mp_policy}
+        fully_shard(torch_dmoe, **fsdp_config, reshard_after_forward=True)
+        
     else:
+        torch_dmoe_mesh = None
         torch_dmoe = DDP(
             torch_dmoe,
             device_ids=[rank],
@@ -145,35 +156,128 @@ def test_dmoe(
     }
     mb_dmoe_mesh = None
     if EP > 1:
-        mb_dmoe_mesh = init_device_mesh(
-            'cuda',
-            (DP*SHARD, EP),
-            mesh_dim_names=('weight_parallel', 'expert_parallel'),
-        )
-        DP_mesh = mb_dmoe_mesh['weight_parallel']
-        EP_mesh = mb_dmoe_mesh['expert_parallel']
-        extra_args.update(
-            {
-                'moe_expert_model_parallelism': True,
-                'expert_parallel_group': EP_mesh.get_group(0), # https://github.com/databricks/megablocks/blob/7b0337fa7278d224bf0c9be71c3a92c392fdd340/megablocks/layers/moe.py#L278
-            },
-        )
+        if use_fsdp and use_only_fsdp:
+            # test only FSDP first
+            mb_dmoe_mesh = init_device_mesh(
+                'cuda',
+                (world_size,),
+                mesh_dim_names=('fsdp',),
+            )
+            DP_mesh = mb_dmoe_mesh['fsdp']
+            EP_mesh = None
+        else:
+            mb_dmoe_mesh = init_device_mesh(
+                'cuda',
+                (DP*SHARD, EP),
+                mesh_dim_names=('weight_parallel', 'expert_parallel'),
+            )
+            DP_mesh = mb_dmoe_mesh['weight_parallel']
+            EP_mesh = mb_dmoe_mesh['expert_parallel']
+            extra_args.update(
+                {
+                    'moe_expert_model_parallelism': True,
+                    'expert_parallel_group': EP_mesh.get_group(0), # https://github.com/databricks/megablocks/blob/7b0337fa7278d224bf0c9be71c3a92c392fdd340/megablocks/layers/moe.py#L278
+                },
+            )
     mp_dmoe_args.update(extra_args)
     args = megablocks.layers.arguments.Arguments(**mp_dmoe_args)
     mb_dmoe = megablocks.layers.dmoe.dMoE(args).to(device)
 
+    ## Construct a DTensor from an already sharded local parameter.
+    ## https://pytorch.org/docs/stable/distributed.tensor.html#torch.distributed.tensor.DTensor.from_local
+    def dtensorify_param(
+        param: nn.Parameter,
+        mesh: DeviceMesh,
+        placements: list[Placement],
+    ):
+        param_dtensor = DTensor.from_local(
+            param.data,
+            device_mesh=mesh,
+            placements=placements,
+            run_check=False,
+        )
+        return nn.Parameter(param_dtensor)
+
     if use_fsdp:
-        raise NotImplementedError
+
         '''
-        ## we should use custom policy for EP + FSDP (FSDP for other layers like router, qkvo)  
+        ## should i use custom policy for EP + FSDP? (FSDP for other layers like router, qkvo)  
         https://pytorch.org/docs/stable/fsdp.html#torch.distributed.fsdp.FullyShardedDataParallel
         https://github.com/mosaicml/llm-foundry/blob/ed6b72bfa555484e41a7e48af132af5692acefd3/llmfoundry/models/layers/ffn.py#L421
         https://github.com/mosaicml/composer/blob/f542250ca3c35977e5f1a153b78177d675de53dd/composer/distributed/dist_strategy.py#L460
         
+        it's like ...
+        def custom_auto_wrap_policy(
+            module: nn.Module,
+            recurse: bool,
+            nonwrapped_numel: int,
+            # Additional custom arguments
+            min_num_params: int = int(1e8),
+        ) -> bool:
+            return nonwrapped_numel >= min_num_params
+        # Configure a custom `min_num_params`
+        my_auto_wrap_policy = functools.partial(custom_auto_wrap_policy, min_num_params=int(1e5))
+
         ## dmoe does not support HSDP ?
         https://github.com/mosaicml/llm-foundry/blob/ed6b72bfa555484e41a7e48af132af5692acefd3/llmfoundry/models/layers/ffn.py#L414
+
+        ## how bound FSDP 2?
+        NotImplementedError: aten._foreach_add_.List: DTensor does not support cross-mesh operation yet! 
+        Got meshes: DeviceMesh('cuda', [0], mesh_dim_names=('weight_parallel',)) DeviceMesh('cuda', [0, 1], mesh_dim_names=('expert_parallel',))
         '''
-        from torch.distributed.fsdp.wrap import CustomPolicy
+        
+        fsdp_config = {"mesh": DP_mesh, "mp_policy": mp_policy}
+        if use_only_fsdp:
+            fully_shard(mb_dmoe, **fsdp_config, reshard_after_forward=False)
+        else:
+            expert_placements: list[Placement] = [Shard(0)]
+            # Register in two loops as you cannot overwrite parameters while iterating over named_parameters()
+            dtensorified_params = [(
+                name,
+                dtensorify_param(
+                    param=parameter,
+                    mesh=EP_mesh,
+                    placements=expert_placements,
+                ),
+            ) for name, parameter in mb_dmoe.experts.mlp.named_parameters()]
+            for name, dtensorified_param in dtensorified_params:
+                mb_dmoe.experts.mlp.register_parameter(name, dtensorified_param)
+            fully_shard(mb_dmoe.router, **fsdp_config, reshard_after_forward=False)
+        mb_dmoe_optimizer = optim.SGD(mb_dmoe.parameters(), lr=0.1)
+
+        print_message_with_master_process(rank, f'''
+        **********************************************
+        ***** before copying params from mb dmoe *****
+        **********************************************
+        ''')
+        for (n, p), (n_, p_) in zip(torch_dmoe.named_parameters(), mb_dmoe.named_parameters()):
+            print_message_with_master_process(rank, f'torch_dmoe/{n}: {p}')
+            print_message_with_master_process(rank, f'mb_dmoe/{n_}: {p_}')
+
+        '''
+        [rank0]:        While copying the parameter named "experts.mlp.w2", whose dimensions in the model are torch.Size([2048, 256]) 
+        and whose dimensions in the checkpoint are torch.Size([2048, 256]), 
+        an exception occurred : ("aten.copy_.default: DTensor does not support cross-mesh operation yet! 
+        Got meshes: DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',)) DeviceMesh('cuda', [[0, 1]], mesh_dim_names=('weight_parallel', 'expert_parallel'))",).
+        '''
+        mb_dmoe_state_dict = get_model_state_dict(
+            mb_dmoe,
+            options=StateDictOptions(full_state_dict=True,),
+        )
+        for k, v in mb_dmoe_state_dict.items():
+            mb_dmoe_state_dict[k] = DTensor.from_local(
+                v.data,
+                device_mesh=torch_dmoe_mesh,
+            )
+        torch_dmoe.load_state_dict(mb_dmoe_state_dict, strict=True)
+        print_message_with_master_process(rank, f'''
+        *********************************************
+        ***** after copying params from mb dmoe *****
+        *********************************************
+        ''')
+        for (n, p), (n_, p_) in zip(torch_dmoe.named_parameters(), mb_dmoe.named_parameters()):
+            print_message_with_master_process(rank, f'torch_dmoe/{n}: {p}')
+            print_message_with_master_process(rank, f'mb_dmoe/{n_}: {p_}')
 
     else:
         mb_dmoe.router = DDP(
@@ -184,21 +288,6 @@ def test_dmoe(
         if EP > 1:
             assert mb_dmoe_mesh is not None
             two_d_placements: list[Placement] = [Replicate(), Shard(0)]
-
-            ## Construct a DTensor from an already sharded local parameter.
-            ## https://pytorch.org/docs/stable/distributed.tensor.html#torch.distributed.tensor.DTensor.from_local
-            def dtensorify_param(
-                param: nn.Parameter,
-                mesh: DeviceMesh,
-                placements: list[Placement],
-            ):
-                param_dtensor = DTensor.from_local(
-                    param.data,
-                    device_mesh=mesh,
-                    placements=placements,
-                    run_check=False,
-                )
-                return nn.Parameter(param_dtensor)
             dtensorified_params = [(
                 name,
                 dtensorify_param(
@@ -230,7 +319,6 @@ def test_dmoe(
                         device_mesh=mb_dmoe_mesh,
                         placements=two_d_placements,
                     ).full_tensor()
-
                     mb_dmoe_state_dict[key] = dtensor_full
         else:
             mb_dmoe.experts = DDP(
@@ -250,11 +338,10 @@ def test_dmoe(
         
     ## sanity check
     print_message_with_master_process(rank, f'''
+    torch_dmoe_mesh: {torch_dmoe_mesh}
     mb_dmoe_mesh: {mb_dmoe_mesh}
     DP_mesh: {DP_mesh}
     EP_mesh: {EP_mesh}
-    DP_mesh.get_group(): {DP_mesh.get_group()}
-    EP_mesh.get_group(): {EP_mesh.get_group()}
 
     common_args: {common_args}
     mp_dmoe_args: {mp_dmoe_args}
@@ -262,24 +349,6 @@ def test_dmoe(
 
     torch_dmoe: {torch_dmoe}
     mb_dmoe: {mb_dmoe}
-    ''')
-
-    tmp_string = ''
-    for n, p in torch_dmoe.named_parameters(): 
-        tmp_string += f'{n} device: {p.device}\n'
-    print(f'''
-    [dmoe details]
-    rank: {rank}
-    allocated devices : {tmp_string}
-    ''')
-
-    tmp_string = ''
-    for n, p in mb_dmoe.named_parameters(): 
-        tmp_string += f'{n} device: {p.device}\n'
-    print(f'''
-    [megablocks dmoe details]
-    rank: {rank}
-    allocated devices : {tmp_string}
     ''')
 
     # Run train_step check
@@ -303,4 +372,8 @@ def test_dmoe(
     cleanup_distributed()
 
 if __name__ == "__main__":
-    test_dmoe()
+    use_fsdp=False
+    use_fsdp=True
+    use_only_fsdp=False
+    # use_only_fsdp=True
+    test_dmoe(use_fsdp=use_fsdp, use_only_fsdp=use_only_fsdp)

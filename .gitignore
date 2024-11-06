@@ -1,6 +1,6 @@
 *.pyc
 .vscode
-exp_logs/.ipynb_checkpoints
+exp_logs/.ipynb_checkpoints/*.ipynb
 slurm-*.out
 wandb
 data/*

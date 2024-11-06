@@ -494,6 +494,7 @@ def parallelize_model(
                         reduce_dtype=torch.float32,
                     )
                 ),
+                # https://github.com/facebookresearch/lingua/blob/31ab231b2d386c4c735e82e8a2c40f10ce13fbbc/apps/main/train.py#L171
                 mesh=(
                     device_mesh["dp_replicate", "dp_shard"]
                     if distributed_args.dp_shard > 1

@@ -141,7 +141,7 @@ test_mesh.py
     shard_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7fd16dcc71b0>
     tp_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7fd1787c0a30>
     
-/mnt/chatbot30TB/shseo/venv/lingua/lib/python3.10/site-packages/torch/distributed/fsdp/_init_utils.py:444: UserWarning: FSDP is switching to use `NO_SHARD` instead of ShardingStrategy.HYBRID_SHARD since the world size is 1.
+/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/distributed/fsdp/_init_utils.py:444: UserWarning: FSDP is switching to use `NO_SHARD` instead of ShardingStrategy.HYBRID_SHARD since the world size is 1.
   warnings.warn(
 
     model: FullyShardedDataParallel(
@@ -171,7 +171,7 @@ test_mesh.py
   )
 )
     
-/mnt/chatbot30TB/shseo/venv/lingua/lib/python3.10/site-packages/torch/distributed/fsdp/_init_utils.py:444: UserWarning: FSDP is switching to use `NO_SHARD` instead of ShardingStrategy.HYBRID_SHARD since the world size is 1.
+/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/distributed/fsdp/_init_utils.py:444: UserWarning: FSDP is switching to use `NO_SHARD` instead of ShardingStrategy.HYBRID_SHARD since the world size is 1.
   warnings.warn(
 0th step loss: 11.174592018127441
 1th step loss: 0.5180912017822266
@@ -366,7 +366,9 @@ rank: 1, world_rank: 1, world size: 8, device: cuda:1
 python -m pip install --upgrade pip
 
 # megablocks
-pip install megablocks==0.6.1
+git clone https://github.com/databricks/megablocks &&\
+cd megablocks &&\
+pip install -e .
 
 # TE
 git clone https://github.com/NVIDIA/TransformerEngine
@@ -400,46 +402,20 @@ torchrun --nproc_per_node=$WORLD_SIZE --master_addr=$MASTER_ADDR --master_port=$
 test_dmoe.py
 ```
 
+<details>
+
 ```python
-rank: 1, world_rank: 1, world size: 2, device: cuda:1                                                                                                   
-rank: 0, world_rank: 0, world size: 2, device: cuda:0                                                                                                   
-                                                                                                                                                        
-    [dmoe details]                                                                                                                                      
-    rank: 1                                                                                                                                             
-    allocated devices : module.router.layer.weight device: cuda:1                                                                                       
-module.experts.mlp.w1 device: cuda:1                                                                                                                    
-module.experts.mlp.v1 device: cuda:1                                                                                                                    
-module.experts.mlp.w2 device: cuda:1                                                                                                                    
-                                                                                                                                                        
-                                                                                                                                                        
-                                                                                                                                                        
-    [megablocks dmoe details]                                                                                                                           
-    rank: 1                                                                                                                                             
-    allocated devices : router.module.layer.weight device: cuda:1                                                                                       
-experts.module.mlp.w1 device: cuda:1                                                                                                                    
-experts.module.mlp.w2 device: cuda:1                                                                                                                    
-experts.module.mlp.v1 device: cuda:1                                                                                                                    
-                                                                                                                                                        
-                                                                                                                                                        
-                                                                                                                                                        
-    mb_dmoe_mesh: DeviceMesh('cuda', [[0, 1]], mesh_dim_names=('weight_parallel', 'expert_parallel'))                                                   
-    DP_mesh: DeviceMesh('cuda', [0], mesh_dim_names=('weight_parallel',))                                                                               
-    EP_mesh: DeviceMesh('cuda', [0, 1], mesh_dim_names=('expert_parallel',))                                                                            
-    DP_mesh.get_group(): <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f297fbec530>                                                     
-    EP_mesh.get_group(): <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f297fbe1ef0>                                                     
-                                                                                                                                                        
-    common_args: {'hidden_size': 256, 'ffn_hidden_size': 256, 'moe_top_k': 2, 'activation_fn': functools.partial(<built-in function gelu>, approximate='
-none'), 'moe_jitter_eps': 0.0, 'moe_normalize_expert_weights': 1.0, 'uniform_expert_assignment': False, 'bias': False, 'device': device(type='cuda', ind
-ex=0), 'moe_num_experts': 8, 'mlp_type': 'glu'}                                                                                                         
-    mp_dmoe_args: {'hidden_size': 256, 'ffn_hidden_size': 256, 'moe_top_k': 2, 'activation_fn': functools.partial(<built-in function gelu>, approximate=
-'none'), 'moe_jitter_eps': 0.0, 'moe_normalize_expert_weights': 1.0, 'uniform_expert_assignment': False, 'bias': False, 'device': device(type='cuda', in
-dex=0), 'moe_num_experts': 8, 'mlp_type': 'glu', 'fp16': False, 'bf16': True, 'init_method': functools.partial(<function uniform_ at 0x7f298aad5630>, a=
--1.0, b=1.0), 'moe_expert_model_parallelism': True, 'expert_parallel_group': <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f297fbe1ef0>}
-    args: Arguments(hidden_size=256, ffn_hidden_size=256, num_layers=1, bias=False, return_bias=True, activation_fn=functools.partial(<built-in function
- gelu>, approximate='none'), moe_num_experts=8, moe_top_k=2, moe_capacity_factor=1, moe_normalize_expert_weights=1.0, moe_loss_weight=0.1, moe_jitter_ep
-s=0.0, moe_lbl_in_fp32=False, moe_expert_model_parallelism=True, expert_parallel_group=<torch.distributed.distributed_c10d.ProcessGroup object at 0x7f29
-7fbe1ef0>, pipeline_model_parallel_size=1, num_layers_per_virtual_pipeline_stage=None, memory_optimized_mlp=False, mlp_type='glu', mlp_impl='sparse', fp
-16=False, bf16=True, device=device(type='cuda', index=0), init_method=functools.partial(<function uniform_ at 0x7f298aad5630>, a=-1.0, b=1.0), output_layer_init_method=functools.partial(<function normal_ at 0x7f298aad56c0>, mean=0.0, std=0.02), uniform_expert_assignment=False, shared_expert=False, fc_cls=<class 'torch.nn.modules.linear.Linear'>, fc_kwargs={}, remat_act_fn=True, shared_expert_hidden_size=256, shared_expert_weighted_sum=False)
+rank: 0, world_rank: 0, world size: 2, device: cuda:0
+rank: 1, world_rank: 1, world size: 2, device: cuda:1
+
+    torch_dmoe_mesh: None
+    mb_dmoe_mesh: DeviceMesh('cuda', [[0, 1]], mesh_dim_names=('weight_parallel', 'expert_parallel'))
+    DP_mesh: DeviceMesh('cuda', [0], mesh_dim_names=('weight_parallel',))
+    EP_mesh: DeviceMesh('cuda', [0, 1], mesh_dim_names=('expert_parallel',))
+
+    common_args: {'hidden_size': 256, 'ffn_hidden_size': 256, 'moe_top_k': 2, 'activation_fn': functools.partial(<built-in function gelu>, approximate='none'), 'moe_jitter_eps': 0.0, 'moe_normalize_expert_weights': 1.0, 'uniform_expert_assignment': False, 'bias': False, 'device': device(type='cuda', index=0), 'moe_num_experts': 8, 'mlp_type': 'glu'}
+    mp_dmoe_args: {'hidden_size': 256, 'ffn_hidden_size': 256, 'moe_top_k': 2, 'activation_fn': functools.partial(<built-in function gelu>, approximate='none'), 'moe_jitter_eps': 0.0, 'moe_normalize_expert_weights': 1.0, 'uniform_expert_assignment': False, 'bias': False, 'device': device(type='cuda', index=0), 'moe_num_experts': 8, 'mlp_type': 'glu', 'fp16': False, 'bf16': True, 'init_method': functools.partial(<function uniform_ at 0x7f624b3ba170>, a=-1.0, b=1.0), 'moe_expert_model_parallelism': True, 'expert_parallel_group': <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f6240445270>}
+    args: Arguments(hidden_size=256, ffn_hidden_size=256, num_layers=1, bias=False, return_bias=True, activation_fn=functools.partial(<built-in function gelu>, approximate='none'), moe_num_experts=8, moe_top_k=2, moe_capacity_factor=1, moe_normalize_expert_weights=1.0, moe_loss_weight=0.1, moe_jitter_eps=0.0, moe_lbl_in_fp32=False, moe_expert_model_parallelism=True, expert_parallel_group=<torch.distributed.distributed_c10d.ProcessGroup object at 0x7f6240445270>, pipeline_model_parallel_size=1, num_layers_per_virtual_pipeline_stage=None, memory_optimized_mlp=False, mlp_type='glu', mlp_impl='sparse', fp16=False, bf16=True, device=device(type='cuda', index=0), init_method=functools.partial(<function uniform_ at 0x7f624b3ba170>, a=-1.0, b=1.0), output_layer_init_method=functools.partial(<function normal_ at 0x7f624b3ba200>, mean=0.0, std=0.02), uniform_expert_assignment=False, shared_expert=False, fc_cls=<class 'torch.nn.modules.linear.Linear'>, fc_kwargs={}, remat_act_fn=True, shared_expert_hidden_size=256, shared_expert_weighted_sum=False, moe_zloss_weight=0, moe_zloss_in_fp32=False)
 
     torch_dmoe: DistributedDataParallel(
   (module): dMoE(
@@ -463,61 +439,202 @@ s=0.0, moe_lbl_in_fp32=False, moe_expert_model_parallelism=True, expert_parallel
     )
   )
 )
-    
-
-    [dmoe details]
-    rank: 0
-    allocated devices : module.router.layer.weight device: cuda:0
-module.experts.mlp.w1 device: cuda:0
-module.experts.mlp.v1 device: cuda:0
-module.experts.mlp.w2 device: cuda:0
-
-    
-
-    [megablocks dmoe details]
-    rank: 0
-    allocated devices : router.module.layer.weight device: cuda:0
-experts.module.mlp.w1 device: cuda:0
-experts.module.mlp.w2 device: cuda:0
-experts.module.mlp.v1 device: cuda:0
-
-    
 
     rank: 0
     x.size(): torch.Size([2, 3, 256])
     x.device: cuda:0
     torch_y.xise(): torch.Size([2, 3, 256])
     
+    rank: 1
+    x.size(): torch.Size([2, 3, 256])
+    x.device: cuda:1
+    torch_y.xise(): torch.Size([2, 3, 256])
+```
+
+```python
+rank: 1, world_rank: 1, world size: 2, device: cuda:1                                                                                                   
+rank: 0, world_rank: 0, world size: 2, device: cuda:0                                                                                                   
+                           
+        *********************************************
+        ***** after copying params from mb dmoe *****
+        *********************************************
+
+torch_dmoe/router.layer.weight: DTensor(local_tensor=tensor([[ 0.3984, -0.0325, -0.5234,  ..., -0.7930,  0.7148,  0.5469],
+        [-0.6953,  0.9180, -0.0234,  ..., -0.3887, -0.6680,  0.5664],
+        [-0.0791,  0.2012,  0.9648,  ..., -0.6992, -0.0557,  0.0200],
+        [-0.2910, -0.3711,  0.3262,  ...,  0.1138,  0.1768,  0.1279]],
+       device='cuda:0', dtype=torch.bfloat16), device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',)), placements=(Shard(dim=0),))
+mb_dmoe/router.layer.weight: DTensor(local_tensor=tensor([[ 0.3984, -0.0325, -0.5234,  ..., -0.7930,  0.7148,  0.5469],
+        [-0.6953,  0.9180, -0.0234,  ..., -0.3887, -0.6680,  0.5664],
+        [-0.0791,  0.2012,  0.9648,  ..., -0.6992, -0.0557,  0.0200],
+        [-0.2910, -0.3711,  0.3262,  ...,  0.1138,  0.1768,  0.1279]],
+       device='cuda:0', dtype=torch.bfloat16), device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',)), placements=(Shard(dim=0),))
+torch_dmoe/experts.mlp.w1: DTensor(local_tensor=tensor([[-0.9961, -0.2988, -0.2852,  ...,  0.0586,  0.0466, -0.3398],
+        [-0.0400,  0.6914,  0.8008,  ...,  0.0059,  0.9297,  0.8555],
+        [-0.4355,  0.0562, -0.2559,  ...,  0.7539,  0.5352,  0.0369],
+        ...,                                                                                                                                                                                                                                                                                                     
+        [-0.2217,  0.9492, -0.5195,  ...,  0.1069,  0.4570, -0.4219],
+        [ 0.7148,  0.7578, -0.3828,  ...,  0.4238,  0.0376, -0.8594],
+        [ 0.5664,  0.2891, -0.6484,  ..., -0.4375,  0.8711, -0.7031]],
+       device='cuda:0', dtype=torch.bfloat16), device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',)), placements=(Shard(dim=0),))
+mb_dmoe/experts.mlp.w1: DTensor(local_tensor=tensor([[-0.9961, -0.2988, -0.2852,  ...,  0.0586,  0.0466, -0.3398],
+        [-0.0400,  0.6914,  0.8008,  ...,  0.0059,  0.9297,  0.8555],
+        [-0.4355,  0.0562, -0.2559,  ...,  0.7539,  0.5352,  0.0369],
+        ...,                                                                                                                                                                                                                                                                                                     
+        [-0.2217,  0.9492, -0.5195,  ...,  0.1069,  0.4570, -0.4219],
+        [ 0.7148,  0.7578, -0.3828,  ...,  0.4238,  0.0376, -0.8594],
+        [ 0.5664,  0.2891, -0.6484,  ..., -0.4375,  0.8711, -0.7031]],
+       device='cuda:0', dtype=torch.bfloat16), device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',)), placements=(Shard(dim=0),))
+torch_dmoe/experts.mlp.v1: DTensor(local_tensor=tensor([[-0.7812, -0.7188,  0.6562,  ...,  0.7656, -0.0383,  0.6289],
+        [-0.3613,  0.5039,  0.6953,  ...,  0.7188, -0.3047, -0.9453],
+        [ 0.4844,  0.5391, -0.9844,  ...,  0.0364,  0.2578,  0.4043],
+        ...,
+        [ 0.4863,  0.9805,  0.8789,  ..., -0.7461, -0.2695, -0.2852],
+        [ 0.3672,  0.7109,  0.9609,  ...,  0.8086, -0.6797, -0.1738],
+        [-0.2852, -0.3301,  0.0742,  ...,  0.9023,  0.4531,  0.6094]],
+       device='cuda:0', dtype=torch.bfloat16), device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',)), placements=(Shard(dim=0),))
+mb_dmoe/experts.mlp.w2: DTensor(local_tensor=tensor([[ 0.0187,  0.0031, -0.0017,  ...,  0.0114,  0.0095, -0.0127],
+        [-0.0298,  0.0269,  0.0116,  ..., -0.0128,  0.0111,  0.0220],
+        [-0.0012,  0.0050, -0.0143,  ...,  0.0159, -0.0079, -0.0282],
+        ...,
+        [ 0.0013,  0.0199,  0.0192,  ...,  0.0247,  0.0143, -0.0244],
+        [-0.0229,  0.0181, -0.0157,  ..., -0.0099, -0.0251,  0.0349],
+        [ 0.0024, -0.0123,  0.0007,  ..., -0.0072, -0.0177,  0.0292]],
+       device='cuda:0', dtype=torch.bfloat16), device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',)), placements=(Shard(dim=0),))
+torch_dmoe/experts.mlp.w2: DTensor(local_tensor=tensor([[ 0.0187,  0.0031, -0.0017,  ...,  0.0114,  0.0095, -0.0127],
+        [-0.0298,  0.0269,  0.0116,  ..., -0.0128,  0.0111,  0.0220],
+        [-0.0012,  0.0050, -0.0143,  ...,  0.0159, -0.0079, -0.0282],
+        ...,
+        [ 0.0013,  0.0199,  0.0192,  ...,  0.0247,  0.0143, -0.0244],
+        [-0.0229,  0.0181, -0.0157,  ..., -0.0099, -0.0251,  0.0349],
+        [ 0.0024, -0.0123,  0.0007,  ..., -0.0072, -0.0177,  0.0292]],
+       device='cuda:0', dtype=torch.bfloat16), device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',)), placements=(Shard(dim=0),))
+mb_dmoe/experts.mlp.v1: DTensor(local_tensor=tensor([[-0.7812, -0.7188,  0.6562,  ...,  0.7656, -0.0383,  0.6289],
+        [-0.3613,  0.5039,  0.6953,  ...,  0.7188, -0.3047, -0.9453],
+        [ 0.4844,  0.5391, -0.9844,  ...,  0.0364,  0.2578,  0.4043],
+        ...,
+        [ 0.4863,  0.9805,  0.8789,  ..., -0.7461, -0.2695, -0.2852],
+        [ 0.3672,  0.7109,  0.9609,  ...,  0.8086, -0.6797, -0.1738],
+        [-0.2852, -0.3301,  0.0742,  ...,  0.9023,  0.4531,  0.6094]],
+       device='cuda:0', dtype=torch.bfloat16), device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',)), placements=(Shard(dim=0),))
+
+    torch_dmoe_mesh: DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',))
+    mb_dmoe_mesh: DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',))
+    DP_mesh: DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',))
+    EP_mesh: None
+
+    common_args: {'hidden_size': 256, 'ffn_hidden_size': 256, 'moe_top_k': 2, 'activation_fn': functools.partial(<built-in function gelu>, approximate='none'), 'moe_jitter_eps': 0.0, 'moe_normalize_expert_weights': 1.0, 'uniform_expert_assignment': False, 'bias': False, 'device': device(type='cuda', index=0), 'moe_num_experts': 8, 'mlp_type': 'glu'}
+    mp_dmoe_args: {'hidden_size': 256, 'ffn_hidden_size': 256, 'moe_top_k': 2, 'activation_fn': functools.partial(<built-in function gelu>, approximate='none'), 'moe_jitter_eps': 0.0, 'moe_normalize_expert_weights': 1.0, 'uniform_expert_assignment': False, 'bias': False, 'device': device(type='cuda', index=0), 'moe_num_experts': 8, 'mlp_type': 'glu', 'fp16': False, 'bf16': True, 'init_method': functools.partial(<function uniform_ at 0x7fcb65ac2170>, a=-1.0, b=1.0)}
+    args: Arguments(hidden_size=256, ffn_hidden_size=256, num_layers=1, bias=False, return_bias=True, activation_fn=functools.partial(<built-in function gelu>, approximate='none'), moe_num_experts=8, moe_top_k=2, moe_capacity_factor=1, moe_normalize_expert_weights=1.0, moe_loss_weight=0.1, moe_jitter_eps=0.0, moe_lbl_in_fp32=False, moe_expert_model_parallelism=False, expert_parallel_group=None, pipeline_model_parallel_size=1, num_layers_per_virtual_pipeline_stage=None, memory_optimized_mlp=False, mlp_type='glu', mlp_impl='sparse', fp16=False, bf16=True, device=device(type='cuda', index=0), init_method=functools.partial(<function uniform_ at 0x7fcb65ac2170>, a=-1.0, b=1.0), output_layer_init_method=functools.partial(<function normal_ at 0x7fcb65ac2200>, mean=0.0, std=0.02), uniform_expert_assignment=False, shared_expert=False, fc_cls=<class 'torch.nn.modules.linear.Linear'>, fc_kwargs={}, remat_act_fn=True, shared_expert_hidden_size=256, shared_expert_weighted_sum=False, moe_zloss_weight=0, moe_zloss_in_fp32=False)
+
+    torch_dmoe: FSDPdMoE(
+  (router): LearnedRouter(
+    (layer): Linear(in_features=256, out_features=8, bias=False)
+  )
+  (experts): DroplessMLP(
+    (mlp): GLU()
+  )
+)
+    mb_dmoe: FSDPdMoE(
+  (router): LearnedRouter(
+    (layer): Linear(in_features=256, out_features=8, bias=False)
+  )
+  (experts): ParallelDroplessMLP(
+    (mlp): SparseGLU()
+  )
+)
+
+    rank: 0
+    x.size(): torch.Size([2, 3, 256])
+    x.device: cuda:0
+    torch_y.xise(): torch.Size([2, 3, 256])
 
     rank: 1
     x.size(): torch.Size([2, 3, 256])
     x.device: cuda:1
     torch_y.xise(): torch.Size([2, 3, 256])
-    
-
-            parallel_tokens_per_expert: tensor([5, 2, 5, 2, 5, 2, 5, 7], device='cuda:1', dtype=torch.int32)
-            repeated_tokens_per_expert: tensor([0, 0, 4, 0, 0, 6, 0, 2], device='cuda:1', dtype=torch.int32)
-            self.args.expert_parallel_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f8df0f83570>
-            
-
-            parallel_tokens_per_expert: tensor([5, 2, 2, 5, 5, 2, 2, 5], device='cuda:0', dtype=torch.int32)
-            repeated_tokens_per_expert: tensor([0, 0, 6, 0, 0, 6, 0, 0], device='cuda:0', dtype=torch.int32)
-            self.args.expert_parallel_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f297fbe1ef0>
-            
-
-            parallel_tokens_per_expert: tensor([7, 2, 7, 5, 7, 5, 7, 2], device='cuda:0', dtype=torch.int32)
-            repeated_tokens_per_expert: tensor([0, 0, 3, 0, 0, 2, 1, 6], device='cuda:0', dtype=torch.int32)
-            self.args.expert_parallel_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f297fbe1ef0>
-            
-
-            parallel_tokens_per_expert: tensor([7, 5, 7, 2, 5, 7, 7, 4], device='cuda:1', dtype=torch.int32)
-            repeated_tokens_per_expert: tensor([1, 0, 2, 0, 1, 2, 0, 6], device='cuda:1', dtype=torch.int32)
-            self.args.expert_parallel_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f8df0f83570>
 ```
+
+
+```python           
+    torch_dmoe_mesh: DeviceMesh('cuda', [0, 1], mesh_dim_names=('fsdp',))
+    mb_dmoe_mesh: DeviceMesh('cuda', [[0, 1]], mesh_dim_names=('weight_parallel', 'expert_parallel'))
+    DP_mesh: DeviceMesh('cuda', [0], mesh_dim_names=('weight_parallel',))
+    EP_mesh: DeviceMesh('cuda', [0, 1], mesh_dim_names=('expert_parallel',))        
+
+mb_dmoe/router.layer.weight: DTensor(local_tensor=tensor([[ 0.3984, -0.0325, -0.5234,  ..., -0.7930,  0.7148,  0.5469],=
+        [-0.6953,  0.9180, -0.0234,  ..., -0.3887, -0.6680,  0.5664],
+        [-0.0791,  0.2012,  0.9648,  ..., -0.6992, -0.0557,  0.0200],
+        ...,
+        [-0.5508, -0.1006,  0.2305,  ...,  0.3672, -0.1904,  0.0156],
+        [-0.1758, -0.9570, -0.8242,  ...,  0.5469, -0.0121,  0.5938],
+        [-0.7891, -0.8086, -0.1011,  ...,  0.2969,  0.1787,  0.1592]],
+       device='cuda:0', dtype=torch.bfloat16), device_mesh=DeviceMesh('cuda', [0], mesh_dim_names=('weight_parallel',)), placements=(Shard(dim=0),))
+
+mb_dmoe/experts.mlp.w1: DTensor(local_tensor=tensor([[-0.9961, -0.2988, -0.2852,  ...,  0.0586,  0.0466, -0.3398],
+        [-0.0400,  0.6914,  0.8008,  ...,  0.0059,  0.9297,  0.8555],
+        [-0.4355,  0.0562, -0.2559,  ...,  0.7539,  0.5352,  0.0369],
+        ...,
+        [-0.2217,  0.9492, -0.5195,  ...,  0.1069,  0.4570, -0.4219],
+        [ 0.7148,  0.7578, -0.3828,  ...,  0.4238,  0.0376, -0.8594],
+        [ 0.5664,  0.2891, -0.6484,  ..., -0.4375,  0.8711, -0.7031]],
+       device='cuda:0', dtype=torch.bfloat16), device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('expert_parallel',)), placements=(Shard(dim=0),))                                                                                                                                                          
+
+mb_dmoe/experts.mlp.w2: DTensor(local_tensor=tensor([[ 0.0187,  0.0031, -0.0017,  ...,  0.0114,  0.0095, -0.0127],
+        [-0.0298,  0.0269,  0.0116,  ..., -0.0128,  0.0111,  0.0220],
+        [-0.0012,  0.0050, -0.0143,  ...,  0.0159, -0.0079, -0.0282],
+        ...,
+        [ 0.0013,  0.0199,  0.0192,  ...,  0.0247,  0.0143, -0.0244],
+        [-0.0229,  0.0181, -0.0157,  ..., -0.0099, -0.0251,  0.0349],
+        [ 0.0024, -0.0123,  0.0007,  ..., -0.0072, -0.0177,  0.0292]],
+       device='cuda:0', dtype=torch.bfloat16), device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('expert_parallel',)), placements=(Shard(dim=0),))
+
+mb_dmoe/experts.mlp.v1: DTensor(local_tensor=tensor([[-0.7812, -0.7188,  0.6562,  ...,  0.7656, -0.0383,  0.6289],
+        [-0.3613,  0.5039,  0.6953,  ...,  0.7188, -0.3047, -0.9453],
+        [ 0.4844,  0.5391, -0.9844,  ...,  0.0364,  0.2578,  0.4043],
+        ...,
+        [ 0.4863,  0.9805,  0.8789,  ..., -0.7461, -0.2695, -0.2852],
+        [ 0.3672,  0.7109,  0.9609,  ...,  0.8086, -0.6797, -0.1738],
+        [-0.2852, -0.3301,  0.0742,  ...,  0.9023,  0.4531,  0.6094]],
+       device='cuda:0', dtype=torch.bfloat16), device_mesh=DeviceMesh('cuda', [0, 1], mesh_dim_names=('expert_parallel',)), placements=(Shard(dim=0),))
+
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/path/to/dir/lingua/exp_srcs/test_dmoe.py", line 379, in <module>
+[rank0]:     test_dmoe(use_fsdp=use_fsdp, use_only_fsdp=use_only_fsdp)
+[rank0]:   File "/path/to/dir/lingua/exp_srcs/test_dmoe.py", line 367, in test_dmoe
+[rank0]:     mb_dmoe_optimizer.step()
+[rank0]:   File "/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/optim/optimizer.py", line 487, in wrapper
+[rank0]:     out = func(*args, **kwargs)
+[rank0]:   File "/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/optim/optimizer.py", line 91, in _use_grad
+[rank0]:     ret = func(self, *args, **kwargs)
+[rank0]:   File "/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/optim/sgd.py", line 123, in step
+[rank0]:     sgd(
+[rank0]:   File "/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/optim/sgd.py", line 298, in sgd
+[rank0]:     func(
+[rank0]:   File "/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/optim/sgd.py", line 440, in _multi_tensor_sgd
+[rank0]:     torch._foreach_add_(device_params, device_grads, alpha=-lr)
+[rank0]:   File "/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/_compile.py", line 32, in inner
+[rank0]:     return disable_fn(*args, **kwargs)
+[rank0]:   File "/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/_dynamo/eval_frame.py", line 632, in _fn
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:   File "/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/distributed/tensor/_api.py", line 340, in __torch_dispatch__
+[rank0]:     return DTensor._op_dispatcher.dispatch(
+[rank0]:   File "/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/distributed/tensor/_dispatch.py", line 166, in dispatch
+[rank0]:     op_info = self.unwrap_to_op_info(op_call, args, kwargs)
+[rank0]:   File "/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/distributed/tensor/_dispatch.py", line 361, in unwrap_to_op_info
+[rank0]:     spec = self._try_replicate_dtensor_spec_in_missing_dim(
+[rank0]:   File "/path/to/dir/venv/lingua/lib/python3.10/site-packages/torch/distributed/tensor/_dispatch.py", line 506, in _try_replicate_dtensor_spec_in_missing_dim
+[rank0]:     raise NotImplementedError(
+[rank0]: NotImplementedError: aten._foreach_add_.List: DTensor does not support cross-mesh operation yet! Got meshes: DeviceMesh('cuda', [0], mesh_dim_names=('weight_parallel',)) DeviceMesh('cuda', [0, 1], mesh_dim_names=('expert_parallel',))
+E1106 12:28:39.629000 42893 torch/distributed/elastic/multiprocessing/api.py:869] failed (exitcode: 1) local_rank: 0 (pid: 42958) of binary: /path/to/dir/venv/lingua/bin/python
+```
+
+</details>
+
+for my understanding) simplified megablocks impl
 
 <details>
 
-for my understanding) simplified megablocks impl
 
 ```python
 class MoE(torch.nn.Module):
@@ -1225,6 +1342,8 @@ torchrun --nproc_per_node=$WORLD_SIZE --master_addr=$MASTER_ADDR --master_port=$
 test_shampoo.py
 ```
 
+<details>
+
 - if freq=100, start_preconditioning=100, iter=100
 
 ```python
@@ -1341,6 +1460,8 @@ rank: 2, world_rank: 2, world size: 4, device: cuda:2
 (90th step) loss: 0.00010169464076170698
 (100th step) loss: 0.00010080093488795683
 ```
+
+</details>
 
 ## further things to followup
 

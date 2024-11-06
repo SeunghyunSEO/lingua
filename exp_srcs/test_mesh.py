@@ -1,7 +1,11 @@
 '''
 https://pytorch.org/tutorials/recipes/distributed_device_mesh.html
 https://pytorch.org/docs/stable/distributed.tensor.html
+
 https://pytorch.org/tutorials/intermediate/FSDP_tutorial.html
+https://github.com/pytorch/torchtitan/blob/main/docs/fsdp.md
+https://github.com/pytorch/pytorch/blob/sdym/2.5.1/torch/distributed/_composable/fully_shard.py#L48
+
 https://pytorch.org/tutorials/intermediate/TP_tutorial.html
 
 https://github.com/pytorch/examples/blob/main/distributed/tensor_parallelism/fsdp_tp_example.py

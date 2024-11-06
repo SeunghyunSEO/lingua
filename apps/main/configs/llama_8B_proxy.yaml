@@ -79,6 +79,7 @@ model:
   multiple_of: 256
   rope_theta: 100_000
 
+  ########################################
   mup: ${oc.env:MUP}
   init_base_std: ${oc.env:INIT_BASE_STD} # 1/sqrt(512)
   init_std_factor: ${oc.env:INIT_STD_FACTOR}
@@ -95,13 +96,22 @@ model:
   query_zero_init: true
   readout_zero_init: true
 
+  ########################################
   fused_rms_norm: true
   # fused_ce: true
 
+  ########################################
   qk_norm: ${oc.env:QK_NORM}
   residual_post_norm: ${oc.env:RES_POST_NORM}
 
+  ########################################
   ngpt: ${oc.env:NGPT}
+
+  ########################################
+  # use_moe: true
+  # moe_dropless: true
+  # moe_num_experts: 8
+  # moe_top_k: 1
 
 ########################################
 optim:

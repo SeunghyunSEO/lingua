@@ -80,6 +80,9 @@ class BaseTransformerArgs:
 
     ########################################
     use_moe: bool = False
+    moe_dropless: bool = False
+    moe_num_experts: int = 8
+    moe_top_k: int = 1
 
 ########################################
 '''
@@ -669,25 +672,52 @@ def adjust_hidden_dim(hidden_dim, ffn_dim_multiplier, multiple_of):
 def get_moe_args(
     args, 
     hidden_size, 
-    moe_top_k,
-    moe_normalize_expert_weights,
-    device,
+    ffn_hidden_size,
 ):
-    from functools import partial
+    # https://github.com/databricks/megablocks/blob/main/megablocks/layers/arguments.py#L23
+    # https://github.com/mosaicml/llm-foundry/blob/066edce6d29b700920fb1833861ff0342113b702/llmfoundry/models/layers/ffn.py#L331
+    # https://github.com/mosaicml/llm-foundry/blob/066edce6d29b700920fb1833861ff0342113b702/llmfoundry/models/layers/ffn.py#L533
+    # https://github.com/allenai/OLMo/blob/sewon-olmoe/olmo/config.py#L1340
+    # https://github.com/databricks/megablocks/issues/57
+
+    from megablocks.layers.arguments import Arguments
     common_args = {
+        ## common FFN configs
         'hidden_size': hidden_size,
-        'ffn_hidden_size': hidden_size,
-        'moe_top_k': moe_top_k,
-        'activation_fn': partial(F.gelu, approximate='none'),
-        'moe_jitter_eps': 0.0,  # Disable randomiztion
-        'moe_normalize_expert_weights': moe_normalize_expert_weights,
-        'uniform_expert_assignment': False,
+        'ffn_hidden_size': ffn_hidden_size,
         'bias': False,
-        'device': device,
-        'moe_num_experts': 32,
         'mlp_type': 'glu',
+        'activation_fn': F.silu,
+
+        ## dist training configs
+        'bf16': True,
+        'fp16': False,
+        'device': None,
+
+        ## MoE training configs
+        'moe_num_experts': args.moe_num_experts,
+        'moe_top_k': args.moe_top_k,
+
+        'mlp_impl': 'sparse',
+        'moe_loss_weight': 0.1,
+        'moe_normalize_expert_weights': None,
+        'moe_jitter_eps': 0.0,  # Disable randomiztion
+        'moe_zloss_weight': 0.0,
+        'moe_zloss_in_fp32': False,
+        'moe_lbl_in_fp32': False,
+        'uniform_expert_assignment': False,
     }
-    return common_args
+    # ## EP, TODO
+    # ep_args = {
+    #     'expert_parallel_group': None,
+    #     'moe_expert_model_parallelism': False,
+    #     'pipeline_model_parallel_size': 1,
+    #     'pipeline_model_parallel_size': None
+    # }
+    # common_args.update(ep_args)
+        
+    args = Arguments(**common_args)
+    return args
 
 class FeedForward(nn.Module):
     def __init__(
@@ -715,21 +745,26 @@ class FeedForward(nn.Module):
             self.base_dim = self.args.base_dim or int(self.args.base_head_dim * self.args.base_n_heads)
             base_hidden_dim = adjust_hidden_dim(
                 4 * self.base_dim, 
-                self.args.base_ffn_dim_multiplier, 
-                self.args.base_multiple_of
+                self.args.base_ffn_dim_multiplier,
+                self.args.base_multiple_of,
             )
             assert base_hidden_dim % mp_size == 0
             self.base_hidden_dim = base_hidden_dim
 
         if self.args.use_moe:
-            raise NotImplementedError
             try:
                 from megablocks.layers.dmoe import dMoE
                 from megablocks.layers.moe import MoE
             except ImportError:
-                raise ImportError("pip install megablocks==0.6.1")
-            self.moe_args = None
-            self.moe = dMoE(self.moe_args) if self.config.moe_dropless else MoE(self.moe_args)
+                raise ImportError(f'''
+                install megablocks from source
+                git clone https://github.com/databricks/megablocks &&\
+                cd megablocks &&\
+                pip install -e .
+                (be careful torch version or something)
+                ''')
+            self.moe_args = get_moe_args(args, self.dim, hidden_dim)
+            self.moe = dMoE(self.moe_args) if self.args.moe_dropless else MoE(self.moe_args)
         else:
             self.w1 = nn.Linear(
                 dim,
@@ -760,7 +795,7 @@ class FeedForward(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
 
-        if self.args.moe:
+        if self.args.use_moe:
             output = self.moe(x)
             
         else:
@@ -801,25 +836,37 @@ class FeedForward(nn.Module):
             out_proj_scale = factor**-1
             
         if self.args.use_moe:
+            # https://github.com/databricks/megablocks/blob/main/megablocks/layers/mlp.py#L308
+            # https://github.com/databricks/megablocks/blob/main/megablocks/layers/glu.py#L19
 
-            ## ffn in, GLU or not
-            for w in [self.moe.experts.mlp.w1, self.moe.experts.mlp.v1, self.moe.router.layer]:
+            ## ffn in, GLU or not (nn.param)
+            for w in [self.moe.experts.mlp.w1, self.moe.experts.mlp.v1]:
                 nn.init.trunc_normal_(
-                    w, 
+                    w,
                     mean=0.0,
                     std=in_init_std *in_proj_scale, 
                     a=-3 * in_init_std *in_proj_scale,
                     b=3 * in_init_std *in_proj_scale,
                 )
 
-            ## out proj
+            ## out proj (nn.param)
             nn.init.trunc_normal_(
-                self.moe.experts.mlp.w,
+                self.moe.experts.mlp.w2,
                 mean=0.0,
                 std=out_init_std *out_proj_scale,
                 a=-3 * out_init_std *out_proj_scale,
                 b=3 * out_init_std *out_proj_scale,
             )
+
+            ## router (nn.Linear)
+            nn.init.trunc_normal_(
+                self.moe.router.layer.weight, 
+                mean=0.0,
+                std=in_init_std *in_proj_scale, 
+                a=-3 * in_init_std *in_proj_scale,
+                b=3 * in_init_std *in_proj_scale,
+            )
+
 
             ## bias
             if self.moe.experts.bias is not None:

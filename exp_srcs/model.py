@@ -87,7 +87,7 @@ class LayerNorm(nn.Module):
         return F.layer_norm(
             x, 
             self.weight.shape, 
-            self.weight, 
+            self.weight,
             self.bias, 
             1e-5,
         )
@@ -127,6 +127,7 @@ class Transformer(nn.Module):
         return precompute_freqs_cis(self.hidden // self.nhead, self.block_size * 2, self.rope_theta)
 
     def compute_loss(self, z, y, ignore_index=-100, reduction='mean'):
+        B, T, C =z.size()
         z = z[..., :-1, :].contiguous().view(B*(T-1), -1) # B*T, C
         y = y.view(-1) # B*T, 1
         return F.cross_entropy(z, y, ignore_index=ignore_index, reduction=reduction)

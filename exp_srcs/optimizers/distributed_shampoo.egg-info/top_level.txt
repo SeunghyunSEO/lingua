@@ -1,4 +1,0 @@
-distributed_shampoo
-matrix_functions
-matrix_functions_types
-optimizer_modules

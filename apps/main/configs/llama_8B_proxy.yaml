@@ -31,7 +31,9 @@ profiling:
 ########################################
 checkpoint:
   dump:
-    every: 10000
+    # every: 100
+    # every: 10000
+    every: 10000000000
     keep: -1
   eval:
     # every: 1000
@@ -103,6 +105,8 @@ model:
 
 ########################################
 optim:
+  opt_cls_name: ${oc.env:OPT_CLS_NAME}
+
   lr: ${oc.env:LR}
   lr_min_ratio: 0.1
   warmup: ${oc.env:WARMUP}

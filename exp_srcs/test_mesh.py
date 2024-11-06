@@ -62,7 +62,6 @@ def test_mesh():
     hidden, nhead, nlayer = 1024, 8, 4
     model = Transformer(vocab_size, block_size, hidden, nhead, nlayer).to(device)
 
-
     ################################################################################
     ## set mesh for 3d parallel
 
@@ -177,6 +176,7 @@ def test_mesh():
             from torch.distributed._symmetric_memory import enable_symm_mem_for_group
             torch._inductor.config._micro_pipeline_tp = True
             enable_symm_mem_for_group(tp_mesh.get_group().group_name)
+            
     use_loss_parallel_ = USE_LOSS_PARALLEL and (TP != 1)
     print(f'use_loss_parallel_: {use_loss_parallel_}')
 
@@ -236,8 +236,8 @@ def test_mesh():
         ]
     else:
         num_iter = 16
-        assert num_iter % (batch_size * world_size) == 0
-        num_iter //= (batch_size * world_size)
+        assert num_iter % (1 * world_size) == 0
+        num_iter //= (1 * world_size)
         context = []
 
     ################################################################################

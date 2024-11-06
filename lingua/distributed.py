@@ -400,56 +400,42 @@ def parallelize_model(
     fsdp_grouping_plan: Optional[List[Tuple[str, bool]]] = None,
     tp_parallelize=None,
     no_recompute_ops=None,
+    use_shampoo=False,
 ):
-    if distributed_args.tp_size > 1:
-        assert (
-            distributed_args.fsdp_type == "full_shard"
-        ), "Only full shard is supported for TP parallelism"
-        assert tp_parallelize is not None, "TP plan is required for TP parallelism"
-        assert (
-            distributed_args.compile == False
-        ), "Compile is not supported for TP parallelism"
+    if use_shampoo:
+        ## idk why fsdp2 does not converge..?
+        assert distributed_args.tp_size == 1, "currently shampoo does not support TP"
         
-        tp_parallelize(model, device_mesh["tp"], model_args, distributed_args)
+        # from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+        # from torch.distributed.fsdp import ShardingStrategy
+        # model = FSDP(
+        #     model, 
+        #     device_mesh=device_mesh, 
+        #     use_orig_params=True,
+        #     sharding_strategy=ShardingStrategy.HYBRID_SHARD
+        # )
 
-    if distributed_args.float8_recipe is not None:
-        if distributed_args.tp_size > 1:
-            raise RuntimeError("float8 is incompatible with tensor-parallelism for now")
-        model = convert_linears_to_fp8(
-            model, distributed_args.float8_recipe, distributed_args.float8_filter
+        param_dtype = dict(fp32=torch.float32, fp16=torch.float16, bf16=torch.bfloat16)[distributed_args.model_dtype]
+        mp_policy = MixedPrecisionPolicy(param_dtype=param_dtype, reduce_dtype=torch.float32)
+        mesh=(
+            device_mesh["dp_replicate", "dp_shard"]
+            if distributed_args.dp_shard > 1
+            or distributed_args.fsdp_type == "no_shard"
+            else device_mesh["dp_replicate"]
         )
+        fsdp_config = {"mesh": mesh, "mp_policy": mp_policy}
 
-    param_dtype = dict(fp32=torch.float32, fp16=torch.float16, bf16=torch.bfloat16)[
-        distributed_args.model_dtype
-    ]
-    if (
-        distributed_args.fsdp_type == "full_shard"
-        or distributed_args.fsdp_type == "no_shard"
-    ):
-        if distributed_args.fsdp_type == "no_shard":
-            assert (
-                distributed_args.dp_shard == 1
-            ), "dp_shard must be 1 for no_shard fsdp_type"
-            assert (
-                device_mesh["dp_shard"].size() == 1
-            ), "dp_shard must be 1 for no_shard fsdp_type"
+        ## ver1
+        # for layer_id, residual_block in enumerate(model.layers):
+        #     reshard_after_forward = int(layer_id) < len(model.layers) - 1
+        #     fully_shard(
+        #         residual_block,
+        #         **fsdp_config,
+        #         reshard_after_forward=reshard_after_forward,
+        #     )
+        # fully_shard(model, **fsdp_config, reshard_after_forward=True)
 
-        fsdp_config = dict(
-            # https://github.com/pytorch/torchtitan/blob/main/docs/fsdp.md
-            mp_policy=(
-                MixedPrecisionPolicy(
-                    param_dtype=param_dtype,
-                    reduce_dtype=torch.float32,
-                )
-            ),
-            mesh=(
-                device_mesh["dp_replicate", "dp_shard"]
-                if distributed_args.dp_shard > 1
-                or distributed_args.fsdp_type == "no_shard"
-                else device_mesh["dp_replicate"]
-            ),
-        )
-
+        ## og ver
         if fsdp_grouping_plan is None:
             # Assume that the model has list of layers and group around it
             fsdp_grouping_plan = default_fsdp_grouping_plan(len(model.layers))
@@ -463,10 +449,76 @@ def parallelize_model(
                     module, **fsdp_config, reshard_after_forward=reshard_after_forward
                 ),
             )
-
         model = fully_shard(model, **fsdp_config, reshard_after_forward=True)
+        
     else:
-        raise ValueError(f"Invalid fsdp_type: {distributed_args.fsdp_type}")
+        ## FSDP 2, https://github.com/pytorch/torchtitan/blob/main/docs/fsdp.md
+        if distributed_args.tp_size > 1:
+            assert (
+                distributed_args.fsdp_type == "full_shard"
+            ), "Only full shard is supported for TP parallelism"
+            assert tp_parallelize is not None, "TP plan is required for TP parallelism"
+            assert (
+                distributed_args.compile == False
+            ), "Compile is not supported for TP parallelism"
+            
+            tp_parallelize(model, device_mesh["tp"], model_args, distributed_args)
+
+        if distributed_args.float8_recipe is not None:
+            if distributed_args.tp_size > 1:
+                raise RuntimeError("float8 is incompatible with tensor-parallelism for now")
+            model = convert_linears_to_fp8(
+                model, distributed_args.float8_recipe, distributed_args.float8_filter
+            )
+
+        param_dtype = dict(fp32=torch.float32, fp16=torch.float16, bf16=torch.bfloat16)[
+            distributed_args.model_dtype
+        ]
+        if (
+            distributed_args.fsdp_type == "full_shard"
+            or distributed_args.fsdp_type == "no_shard"
+        ):
+            if distributed_args.fsdp_type == "no_shard":
+                assert (
+                    distributed_args.dp_shard == 1
+                ), "dp_shard must be 1 for no_shard fsdp_type"
+                assert (
+                    device_mesh["dp_shard"].size() == 1
+                ), "dp_shard must be 1 for no_shard fsdp_type"
+
+            fsdp_config = dict(
+                # https://github.com/pytorch/torchtitan/blob/main/docs/fsdp.md
+                mp_policy=(
+                    MixedPrecisionPolicy(
+                        param_dtype=param_dtype,
+                        reduce_dtype=torch.float32,
+                    )
+                ),
+                mesh=(
+                    device_mesh["dp_replicate", "dp_shard"]
+                    if distributed_args.dp_shard > 1
+                    or distributed_args.fsdp_type == "no_shard"
+                    else device_mesh["dp_replicate"]
+                ),
+            )
+
+            if fsdp_grouping_plan is None:
+                # Assume that the model has list of layers and group around it
+                fsdp_grouping_plan = default_fsdp_grouping_plan(len(model.layers))
+
+            for path, reshard_after_forward in fsdp_grouping_plan:
+                module = get_module(model, path)
+                set_module(
+                    model,
+                    path,
+                    fully_shard(
+                        module, **fsdp_config, reshard_after_forward=reshard_after_forward
+                    ),
+                )
+
+            model = fully_shard(model, **fsdp_config, reshard_after_forward=True)
+        else:
+            raise ValueError(f"Invalid fsdp_type: {distributed_args.fsdp_type}")
 
     if distributed_args.selective_activation_checkpointing:
         model = checkpoint_wrapper(

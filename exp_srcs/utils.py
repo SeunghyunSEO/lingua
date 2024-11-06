@@ -20,6 +20,11 @@ def init_dist(backend="nccl"):
     dist.init_process_group(backend=backend, init_method="env://", rank=world_rank, world_size=world_size)
     device = torch.device("cuda:{}".format(rank))
     print(f"rank: {rank}, world_rank: {world_rank}, world size: {world_size}, device: {device}")
+    
+    # https://github.com/facebookresearch/optimizers/blob/89fd01d609019ec5bced42e32be3cdccfa59bab6/distributed_shampoo/examples/trainer_utils.py#L556
+    ## wtf, this is so important, if u do not use this, there would be device mismatch 
+    torch.cuda.set_device(rank)
+
     return rank, world_rank, world_size, device
 
 def cleanup_distributed():

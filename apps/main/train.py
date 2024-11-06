@@ -259,6 +259,8 @@ def train(args: TrainArgs):
             args.model.init_base_std = None
         if args.distributed.tp_size != 1:
             args.model.tp_size = args.distributed.tp_size
+
+        # https://pytorch.org/docs/stable/meta.html
         with torch.device("meta"):
             model = LMTransformer(args.model)
         logger.info(f"Model is built !")
@@ -273,8 +275,9 @@ def train(args: TrainArgs):
             fsdp_grouping_plan=build_fsdp_grouping_plan(args.model),
             tp_parallelize=tp_parallelize,
             no_recompute_ops=get_no_recompute_ops(),
+            use_shampoo=args.optim.opt_cls_name=='shampoo',
         )
-
+        
         # Once we shard the model on different gpus we can actually initialize the model
         # First we create empty tensors of the correct shapes
         model = model.to_empty(device="cuda")
@@ -306,7 +309,14 @@ def train(args: TrainArgs):
         if args.model.ngpt:
             assert args.optim.weight_decay == 0.0
             assert args.optim.warmup == 0
-        optimizer, scheduler = build_optimizer(model, args.optim, args.steps, args.model)
+        optimizer, scheduler = build_optimizer(
+            model, 
+            args.optim, 
+            args.steps, 
+            args.model, 
+            args.distributed,
+            world_mesh,
+        )
 
         data_loader_state = init_dataloader_state_from_args(
             args.data, dp_rank, dp_degree

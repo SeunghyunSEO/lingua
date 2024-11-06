@@ -7,7 +7,7 @@ import math
 import logging
 import torch
 from torch import nn
-from torch.optim import AdamW, lr_scheduler
+from torch.optim import lr_scheduler
 
 logger = logging.getLogger()
 
@@ -31,6 +31,8 @@ class OptimArgs:
     exp_factor: float = 0.5
 
     truly_decoupled_wd: bool = False
+
+    opt_cls_name: str = "adamw"
 
 
 def lr_linear(step: int, warmup: int, n_steps: int, min_ratio: float) -> float:
@@ -107,11 +109,22 @@ def adjust_hidden_dim(hidden_dim, ffn_dim_multiplier, multiple_of):
     return hidden_dim
 
 from collections import defaultdict
-def get_optimizer(model, args, model_args):
-    opt_cls = AdamW
+def get_optimizer(model, args, model_args, dist_args, device_mesh):
+
+    if args.opt_cls_name.lower() == 'adamw':
+        from torch.optim import AdamW
+        opt_cls = AdamW
+    elif args.opt_cls_name.lower() == 'shampoo':
+        from distributed_shampoo.distributed_shampoo import DistributedShampoo
+        from distributed_shampoo.shampoo_types import AdamGraftingConfig, FullyShardShampooConfig, HSDPShampooConfig
+        from distributed_shampoo.utils.shampoo_fsdp_utils import compile_fsdp_parameter_metadata
+        opt_cls = DistributedShampoo
+    else:
+        raise NotImplementedError
+    
     truly_decoupled_wd = args.truly_decoupled_wd
     if truly_decoupled_wd:
-        assert (group['weight_decay'] < 0.001), f"weight_decay value ({weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
+        assert (args.weight_decay < 0.001), f"weight_decay value ({args.weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
 
     def new_group():
         new_g = {
@@ -130,11 +143,39 @@ def get_optimizer(model, args, model_args):
 
     no_decay_name_list = ["bias", "norm", "scaler"]
     optimizer_grouped_parameters = []
-    opt_kwargs = {
-        'betas': (args.beta1, args.beta2),
-        'eps': args.epsilon,
-        'fused': True,
-    }
+
+    if args.opt_cls_name.lower() == 'adamw':
+        opt_kwargs = {
+            'betas': (args.beta1, args.beta2),
+            'eps': args.epsilon,
+            'fused': True,
+        }
+    elif args.opt_cls_name.lower() == 'shampoo':
+        opt_kwargs = {
+            'betas': (args.beta1, args.beta2),
+            'epsilon': args.epsilon,
+            'grafting_config': AdamGraftingConfig(
+                beta2=args.beta2,
+                epsilon=args.epsilon,
+            ),
+            'use_decoupled_weight_decay': truly_decoupled_wd,
+
+            'max_preconditioner_dim': 1024,
+            'precondition_frequency': 1,
+            'start_preconditioning_step': -1,
+        }
+
+        # ## for hsdp
+        # opt_kwargs['distributed_config'] = HSDPShampooConfig(
+        #     param_to_metadata=compile_fsdp_parameter_metadata(model),
+        #     device_mesh=device_mesh,
+        # )
+
+        ## for fully_shard (fsdp2)
+        opt_kwargs['distributed_config'] = FullyShardShampooConfig()
+
+    else:
+        raise NotImplementedError
 
     if model_args.mup:
 
@@ -166,7 +207,7 @@ def get_optimizer(model, args, model_args):
                 if ('tok_embeddings' in n) or ('output' in n):
                     vector_like_p['params'].append(p)
                 elif any(ndnl in n for ndnl in no_decay_name_list):
-                    print(f'{n} is in {no_decay_name_list}, so wd is set as 0')
+                    # print(f'{n} is in {no_decay_name_list}, so wd is set as 0')
                     no_decay_group['params'].append(p)
                 else:
                     if 'wo' in n:
@@ -203,7 +244,7 @@ def get_optimizer(model, args, model_args):
         for n, p in model.named_parameters():
             if p.requires_grad:
                 if any(ndnl in n for ndnl in no_decay_name_list):
-                    print(f'{n} is in {no_decay_name_list}, so wd is set as 0')
+                    # print(f'{n} is in {no_decay_name_list}, so wd is set as 0')
                     no_decay_group['params'].append(p)
                 else:
                     default_group['params'].append(p)
@@ -220,11 +261,12 @@ def get_optimizer(model, args, model_args):
         optimizer_grouped_parameters, 
         **opt_kwargs,
     )
+    
 
-def build_optimizer(model: nn.Module, args: OptimArgs, n_steps: int, model_args):
+def build_optimizer(model: nn.Module, args: OptimArgs, n_steps: int, model_args, dist_args, device_mesh):
     logger.info("Starting build of optimizer...")
     # optimizer
-    optimizer = get_optimizer(model, args, model_args)
+    optimizer = get_optimizer(model, args, model_args, dist_args, device_mesh)
 
     # scheduler
     lr_fn = build_lr_fn(args, n_steps)

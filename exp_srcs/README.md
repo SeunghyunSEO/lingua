@@ -401,7 +401,118 @@ test_dmoe.py
 ```
 
 ```python
+rank: 1, world_rank: 1, world size: 2, device: cuda:1                                                                                                   
+rank: 0, world_rank: 0, world size: 2, device: cuda:0                                                                                                   
+                                                                                                                                                        
+    [dmoe details]                                                                                                                                      
+    rank: 1                                                                                                                                             
+    allocated devices : module.router.layer.weight device: cuda:1                                                                                       
+module.experts.mlp.w1 device: cuda:1                                                                                                                    
+module.experts.mlp.v1 device: cuda:1                                                                                                                    
+module.experts.mlp.w2 device: cuda:1                                                                                                                    
+                                                                                                                                                        
+                                                                                                                                                        
+                                                                                                                                                        
+    [megablocks dmoe details]                                                                                                                           
+    rank: 1                                                                                                                                             
+    allocated devices : router.module.layer.weight device: cuda:1                                                                                       
+experts.module.mlp.w1 device: cuda:1                                                                                                                    
+experts.module.mlp.w2 device: cuda:1                                                                                                                    
+experts.module.mlp.v1 device: cuda:1                                                                                                                    
+                                                                                                                                                        
+                                                                                                                                                        
+                                                                                                                                                        
+    mb_dmoe_mesh: DeviceMesh('cuda', [[0, 1]], mesh_dim_names=('weight_parallel', 'expert_parallel'))                                                   
+    DP_mesh: DeviceMesh('cuda', [0], mesh_dim_names=('weight_parallel',))                                                                               
+    EP_mesh: DeviceMesh('cuda', [0, 1], mesh_dim_names=('expert_parallel',))                                                                            
+    DP_mesh.get_group(): <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f297fbec530>                                                     
+    EP_mesh.get_group(): <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f297fbe1ef0>                                                     
+                                                                                                                                                        
+    common_args: {'hidden_size': 256, 'ffn_hidden_size': 256, 'moe_top_k': 2, 'activation_fn': functools.partial(<built-in function gelu>, approximate='
+none'), 'moe_jitter_eps': 0.0, 'moe_normalize_expert_weights': 1.0, 'uniform_expert_assignment': False, 'bias': False, 'device': device(type='cuda', ind
+ex=0), 'moe_num_experts': 8, 'mlp_type': 'glu'}                                                                                                         
+    mp_dmoe_args: {'hidden_size': 256, 'ffn_hidden_size': 256, 'moe_top_k': 2, 'activation_fn': functools.partial(<built-in function gelu>, approximate=
+'none'), 'moe_jitter_eps': 0.0, 'moe_normalize_expert_weights': 1.0, 'uniform_expert_assignment': False, 'bias': False, 'device': device(type='cuda', in
+dex=0), 'moe_num_experts': 8, 'mlp_type': 'glu', 'fp16': False, 'bf16': True, 'init_method': functools.partial(<function uniform_ at 0x7f298aad5630>, a=
+-1.0, b=1.0), 'moe_expert_model_parallelism': True, 'expert_parallel_group': <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f297fbe1ef0>}
+    args: Arguments(hidden_size=256, ffn_hidden_size=256, num_layers=1, bias=False, return_bias=True, activation_fn=functools.partial(<built-in function
+ gelu>, approximate='none'), moe_num_experts=8, moe_top_k=2, moe_capacity_factor=1, moe_normalize_expert_weights=1.0, moe_loss_weight=0.1, moe_jitter_ep
+s=0.0, moe_lbl_in_fp32=False, moe_expert_model_parallelism=True, expert_parallel_group=<torch.distributed.distributed_c10d.ProcessGroup object at 0x7f29
+7fbe1ef0>, pipeline_model_parallel_size=1, num_layers_per_virtual_pipeline_stage=None, memory_optimized_mlp=False, mlp_type='glu', mlp_impl='sparse', fp
+16=False, bf16=True, device=device(type='cuda', index=0), init_method=functools.partial(<function uniform_ at 0x7f298aad5630>, a=-1.0, b=1.0), output_layer_init_method=functools.partial(<function normal_ at 0x7f298aad56c0>, mean=0.0, std=0.02), uniform_expert_assignment=False, shared_expert=False, fc_cls=<class 'torch.nn.modules.linear.Linear'>, fc_kwargs={}, remat_act_fn=True, shared_expert_hidden_size=256, shared_expert_weighted_sum=False)
 
+    torch_dmoe: DistributedDataParallel(
+  (module): dMoE(
+    (router): LearnedRouter(
+      (layer): Linear(in_features=256, out_features=8, bias=False)
+    )
+    (experts): DroplessMLP(
+      (mlp): GLU()
+    )
+  )
+)
+    mb_dmoe: dMoE(
+  (router): DistributedDataParallel(
+    (module): LearnedRouter(
+      (layer): Linear(in_features=256, out_features=8, bias=False)
+    )
+  )
+  (experts): DistributedDataParallel(
+    (module): ParallelDroplessMLP(
+      (mlp): SparseGLU()
+    )
+  )
+)
+    
+
+    [dmoe details]
+    rank: 0
+    allocated devices : module.router.layer.weight device: cuda:0
+module.experts.mlp.w1 device: cuda:0
+module.experts.mlp.v1 device: cuda:0
+module.experts.mlp.w2 device: cuda:0
+
+    
+
+    [megablocks dmoe details]
+    rank: 0
+    allocated devices : router.module.layer.weight device: cuda:0
+experts.module.mlp.w1 device: cuda:0
+experts.module.mlp.w2 device: cuda:0
+experts.module.mlp.v1 device: cuda:0
+
+    
+
+    rank: 0
+    x.size(): torch.Size([2, 3, 256])
+    x.device: cuda:0
+    torch_y.xise(): torch.Size([2, 3, 256])
+    
+
+    rank: 1
+    x.size(): torch.Size([2, 3, 256])
+    x.device: cuda:1
+    torch_y.xise(): torch.Size([2, 3, 256])
+    
+
+            parallel_tokens_per_expert: tensor([5, 2, 5, 2, 5, 2, 5, 7], device='cuda:1', dtype=torch.int32)
+            repeated_tokens_per_expert: tensor([0, 0, 4, 0, 0, 6, 0, 2], device='cuda:1', dtype=torch.int32)
+            self.args.expert_parallel_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f8df0f83570>
+            
+
+            parallel_tokens_per_expert: tensor([5, 2, 2, 5, 5, 2, 2, 5], device='cuda:0', dtype=torch.int32)
+            repeated_tokens_per_expert: tensor([0, 0, 6, 0, 0, 6, 0, 0], device='cuda:0', dtype=torch.int32)
+            self.args.expert_parallel_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f297fbe1ef0>
+            
+
+            parallel_tokens_per_expert: tensor([7, 2, 7, 5, 7, 5, 7, 2], device='cuda:0', dtype=torch.int32)
+            repeated_tokens_per_expert: tensor([0, 0, 3, 0, 0, 2, 1, 6], device='cuda:0', dtype=torch.int32)
+            self.args.expert_parallel_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f297fbe1ef0>
+            
+
+            parallel_tokens_per_expert: tensor([7, 5, 7, 2, 5, 7, 7, 4], device='cuda:1', dtype=torch.int32)
+            repeated_tokens_per_expert: tensor([1, 0, 2, 0, 1, 2, 0, 6], device='cuda:1', dtype=torch.int32)
+            self.args.expert_parallel_group: <torch.distributed.distributed_c10d.ProcessGroup object at 0x7f8df0f83570>
 ```
 
 <details>
@@ -1074,6 +1185,7 @@ class ParallelDroplessMLP(moe.ParallelMLP):
 # shampoo
 
 ```bash
+# ill just keep everyting up-to-date (source build from main)
 git clone https://github.com/facebookresearch/optimizers
 cd optimizers && pip install -e . && cd ..
 python -c "from distributed_shampoo.distributed_shampoo import DistributedShampoo;
@@ -1081,33 +1193,52 @@ shampoo_optimizer = DistributedShampoo;
 print(shampoo_optimizer)"
 ```
 
+```python
+Building wheels for collected packages: optimizers
+  Building editable for optimizers (pyproject.toml) ... done
+  Created wheel for optimizers: filename=optimizers-1.0.0-0.editable-py3-none-any.whl size=4968 sha256=7dc5a04a5eed5f4ce38b5ca69f9150f099e0a58c1037a15b23ee94fbce87eba9
+  Stored in directory: /tmp/pip-ephem-wheel-cache-xdagbegh/wheels/76/fb/4f/f2cd34520270781f76b2cc5bc777f3655ee334524b1d15c7de
+Successfully built optimizers
+Installing collected packages: optimizers
+Successfully installed optimizers-1.0.0
+
+[notice] A new release of pip is available: 24.2 -> 24.3.1
+[notice] To update, run: pip install --upgrade pip
+<class 'distributed_shampoo.distributed_shampoo.DistributedShampoo'>
+```
+
 ```bash
 # cd /path/to/dir/lingua/exp_srcs
-export WORLD_SIZE=2 &&\
+export WORLD_SIZE=4 &&\
 export MASTER_ADDR=node0 &&\
 export MASTER_PORT=23458
-export DP=1 &&\
+
+# export DP=1 &&\
+# export SHARD=4 &&\
+# export TP=1
+
+export DP=2 &&\
 export SHARD=2 &&\
 export TP=1
+
 torchrun --nproc_per_node=$WORLD_SIZE --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT \
 test_shampoo.py
 ```
 
-- warnings
-
-```
-[rank0]: ValueError: Invalid start_preconditioning_step value: 20. Must be >= precondition_frequency=100.
-```
-
-```
-start_preconditioning_step set to -1. Setting start_preconditioning_step equal to precondition frequency 100 by default.
-```
-
-- actual logs
+- if freq=100, start_preconditioning=100, iter=100
 
 ```python
-rank: 1, world_rank: 1, world size: 2, device: cuda:1
-rank: 0, world_rank: 0, world size: 2, device: cuda:0
+rank: 1, world_rank: 1, world size: 4, device: cuda:1
+rank: 3, world_rank: 3, world size: 4, device: cuda:3
+rank: 0, world_rank: 0, world size: 4, device: cuda:0
+rank: 2, world_rank: 2, world size: 4, device: cuda:2
+
+    world_size: 4 
+    DP: 2 
+    SHARD: 2
+    USE_FSDP: True
+    USE_FSDP1: True
+    USE_HSDP: True
 
     model: FullyShardedDataParallel(
   (_fsdp_wrapped_module): Transformer(
@@ -1135,11 +1266,7 @@ rank: 0, world_rank: 0, world size: 2, device: cuda:0
     (lm_head): Linear(in_features=1024, out_features=50257, bias=False)
   )
 )
-
-- if freq=100, start_preconditioning=100, iter=100
-
-```python
-start_preconditioning_step set to -1. Setting start_preconditioning_step equal to precondition frequency 100 by default.
+    
 (10th step) loss: 0.0012735219206660986
 (20th step) loss: 0.00038887240225449204
 (30th step) loss: 0.0002023066335823387
@@ -1154,7 +1281,7 @@ start_preconditioning_step set to -1. Setting start_preconditioning_step equal t
 
 - if freq=20, start_preconditioning=20, iter=100 
 
-```python
+```python    
 (10th step) loss: 0.0012735219206660986
 (20th step) loss: 0.00038887240225449204
 (30th step) loss: 3.665658823592821e-06
@@ -1165,6 +1292,54 @@ start_preconditioning_step set to -1. Setting start_preconditioning_step equal t
 (80th step) loss: 6.854525622657093e-07
 (90th step) loss: 5.960458224762988e-07
 (100th step) loss: 5.36441234544327e-07
+```
+
+- using `fully_shard` (fsdp2)
+    - but there is a bug for upcasting fp32 layernorm ? so i down cast layernorm but loss seems not good
+
+```python
+    world_size: 4 
+    DP: 2 
+    SHARD: 2
+    USE_FSDP: True
+    USE_FSDP1: False
+    USE_HSDP: True
+
+    model: FSDPTransformer(
+  (model): ModuleDict(
+    (wte): Embedding(50257, 1024)
+    (h): ModuleList(
+      (0-3): 4 x FSDPResidualBlock(
+        (ln1): LayerNorm()
+        (attn): Attention(
+          (q_proj): Linear(in_features=1024, out_features=1024, bias=False)
+          (k_proj): Linear(in_features=1024, out_features=1024, bias=False)
+          (v_proj): Linear(in_features=1024, out_features=1024, bias=False)
+          (o_proj): Linear(in_features=1024, out_features=1024, bias=False)
+        )
+        (ln2): LayerNorm()
+        (mlp): MLP(
+          (ffn1): Linear(in_features=1024, out_features=4096, bias=False)
+          (act): GELU(approximate='none')
+          (ffn2): Linear(in_features=4096, out_features=1024, bias=False)
+        )
+      )
+    )
+    (ln): LayerNorm()
+  )
+  (lm_head): Linear(in_features=1024, out_features=50257, bias=False)
+)
+    
+(10th step) loss: 0.0017692593391984701
+(20th step) loss: 0.000617060053627938
+(30th step) loss: 0.00016930924903135747
+(40th step) loss: 0.0001316617854172364
+(50th step) loss: 0.00011769146658480167
+(60th step) loss: 0.0001039586859405972
+(70th step) loss: 0.00010327351628802717
+(80th step) loss: 0.00010246918100165203
+(90th step) loss: 0.00010169464076170698
+(100th step) loss: 0.00010080093488795683
 ```
 
 ## further things to followup

@@ -27,7 +27,7 @@ def get_optimizer(model, args, model_args):
     opt_cls = AdamW
     truly_decoupled_wd = args.truly_decoupled_wd
     if truly_decoupled_wd:
-        assert (group['weight_decay'] < 0.001), f"weight_decay value ({weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
+        assert (args.weight_decay < 0.001), f"weight_decay value ({args.weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
 
     def new_group():
         new_g = {

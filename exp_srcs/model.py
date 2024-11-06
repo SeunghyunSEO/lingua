@@ -17,7 +17,6 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
     return freqs_cis
 
-
 def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
     ndim = x.ndim
     assert 0 <= 1 < ndim
@@ -78,7 +77,20 @@ class LayerNorm(nn.Module):
         self.bias = nn.Parameter(torch.zeros(hidden)) if bias else None
 
     def forward(self, x):
-        return F.layer_norm(x.float(), self.weight.shape, self.weight, self.bias, 1e-5).type_as(x)
+        # return F.layer_norm(
+        #     x.float(), 
+        #     self.weight.shape, 
+        #     self.weight.float(), 
+        #     self.bias, 
+        #     1e-5,
+        # ).type_as(x)
+        return F.layer_norm(
+            x, 
+            self.weight.shape, 
+            self.weight, 
+            self.bias, 
+            1e-5,
+        )
 
 class ResidualBlock(nn.Module):
     def __init__(self, hidden, nhead, bias=False):

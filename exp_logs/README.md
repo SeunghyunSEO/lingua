@@ -4,14 +4,18 @@
 - [x] mup
 - [x] fused kernel patch
     - TBD) fused ce dtensor issue
-- [ ] logger
+- [x] logger
     - [x] activation norm 
         - already exists
     - [x] grad norm
         - already exists
-    - [ ] param norm 
-- [ ] enabling dmoe
-- [ ] enabling dist shampoo
+    - [x] param norm 
+        - already exists
+- [ ] enabling dmoe in trainer
+    - [x] test dmoe with parallelism
+    - [ ] with fsdp
+- [ ] enabling dist shampoo in trainer
+    - [x] with fsdp
 
 
 # example run
@@ -288,32 +292,6 @@ done
 
 ```bash
 ############################################################
-export COMPILE=true
-# export COMPILE=false
-
-# export DP_DEGREE=8
-# export DP_SHARD_DEGREE=1
-# export TP_DEGREE=1
-
-export DP_DEGREE=2
-export DP_SHARD_DEGREE=4
-export TP_DEGREE=1
-
-# export DP_DEGREE=1
-# export DP_SHARD_DEGREE=8
-# export TP_DEGREE=1
-
-############################################################
-# ## for TP sanity check
-# export DP_DEGREE=4
-# export DP_SHARD_DEGREE=1
-# export TP_DEGREE=2
-
-############################################################
-export FSDP_TYPE=full_shard
-# export FSDP_TYPE=no_shard
-
-############################################################
 export MUP=true
 export INIT_STD_FACTOR=global_depth
 export INIT_BASE_STD=0.04419 # 1/sqrt(512)
@@ -324,29 +302,78 @@ export BASE_N_KV_HEADS=1
 
 # export N_HEADS=4
 # export N_KV_HEADS=1
-export N_HEADS=8
-export N_KV_HEADS=2
+# export N_HEADS=8
+# export N_KV_HEADS=2
 # export N_HEADS=16
 # export N_KV_HEADS=4
-# export N_HEADS=32
-# export N_KV_HEADS=8
-
-############################################################
-export WEIGHT_DECAY=0.1
-export TRULY_DECOUPLED_WD=false
+export N_HEADS=32
+export N_KV_HEADS=8
 
 ############################################################
 export STEPS=40000 # 4*4096*8*40000=5.24B tokens
 export WARMUP=1000
-export BSZ=4
-export ACCUM=1
+if [ "$N_HEADS" -eq 32 ]; then
+    export BSZ=2
+    export ACCUM=2
+else
+    export BSZ=4
+    export ACCUM=1
+fi
 
 ############################################################
-# export QK_NORM=false
-export QK_NORM=true
 
-# export RES_POST_NORM=false
-export RES_POST_NORM=true
+export RUN_TYPE="local_run"
+# export RUN_TYPE="slurm_run"
+
+if [ "$RUN_TYPE" = "local_run" ]; then
+    ## local run
+    export WORLD_SIZE=8
+    export MASTER_ADDR=node0
+    export MASTER_PORT=23458
+
+    if [ "$N_HEADS" -eq 4 ]; then
+        export DP_DEGREE=8
+        export DP_SHARD_DEGREE=1
+        export TP_DEGREE=1
+        export FSDP_TYPE=no_shard
+    elif [ "$N_HEADS" -eq 8 ] || [ "$N_HEADS" -eq 16 ]; then
+        export DP_DEGREE=2
+        export DP_SHARD_DEGREE=4
+        export TP_DEGREE=1
+        export FSDP_TYPE=full_shard
+    elif [ "$N_HEADS" -eq 32 ]; then
+        export DP_DEGREE=1
+        export DP_SHARD_DEGREE=8
+        export TP_DEGREE=1
+        export FSDP_TYPE=full_shard
+    fi
+
+    export COMPILE=true
+    # export COMPILE=false
+
+    # ## for TP sanity check
+    # export DP_DEGREE=4
+    # export DP_SHARD_DEGREE=1
+    # export TP_DEGREE=2
+
+elif [ "$RUN_TYPE" = "slurm_run" ]; then
+    ## slurn run 
+    echo "TBC"
+fi
+
+############################################################
+export OPT_CLS_NAME='adamw'
+# export OPT_CLS_NAME='shampoo'
+
+export WEIGHT_DECAY=0.1
+export TRULY_DECOUPLED_WD=false
+
+############################################################
+export QK_NORM=false
+# export QK_NORM=true
+
+export RES_POST_NORM=false
+# export RES_POST_NORM=true
 
 ############################################################
 export NGPT=false
@@ -369,11 +396,21 @@ export PROFILING_RUN=false
 # LRS=(0.00391)
 # LRS=(0.00195)
 # LRS=(0.00098 0.00195 0.00781)
-LRS=( # low resolution sweep / 2^-13 ~ 2^-4
-        0.000061 0.000122 0.00024 0.00049
-        0.00098 0.00195
-        0.00391 0.00781
-        0.01562 0.03125 0.0625
+# LRS=( # low resolution sweep / 2^-13 ~ 2^-4
+#         0.000061 0.000122 0.00024 0.00049
+#         0.00098 0.00195
+#         0.00391 0.00781
+#         0.01562 0.03125 0.0625
+# )
+# LRS=( # narrow range (only basin)
+#         0.00024 0.00049
+#         0.00098 0.00195
+#         0.00391 0.00781
+#         0.01562
+# )
+LRS=( # narrow range (only basin)
+    0.00098 0.00195
+    0.00391 0.00781
 )
 # LRS=( # high resolution sweep / 2^-13 ~ 2^-4
 #         0.000061 0.000122 0.00024 0.00049
@@ -387,26 +424,31 @@ export CONFIG=llama_8B_proxy
 export WANDB_PROJECT_NAME="lingua"
 for LR in "${LRS[@]}"; do
     export LR=$LR
+    if [ "$TRULY_DECOUPLED_WD" = "true" ]; then
+        export WEIGHT_DECAY=$(echo "scale=8; $LR*0.1" | bc)
+    fi
+
     WANDB_EXP_NAME="mup_${MUP}_nhead_${N_HEADS}_nkvhead_${N_KV_HEADS}_basenhead_${BASE_N_HEADS}_basenkvhead_${BASE_N_KV_HEADS}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_world_${WORLD_SIZE}_DP_${DP_DEGREE}_SHARD_${DP_SHARD_DEGREE}_TP_${TP_DEGREE}_fsdp_${FSDP_TYPE}_compile_${COMPILE}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_step_${STEPS}_warmup_${WARMUP}_bsz_${BSZ}_accum_${ACCUM}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_lr_${LR}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_qknorm_${QK_NORM}_resnorm_${RES_POST_NORM}"
     WANDB_EXP_NAME="${WANDB_EXP_NAME}_ngpt_${NGPT}_wd_${WEIGHT_DECAY}"
+    WANDB_EXP_NAME="${WANDB_EXP_NAME}_optim_${OPT_CLS_NAME}"
     export WANDB_EXP_NAME=$WANDB_EXP_NAME
     export DUMP_DIR="exp_logs/assets/logs/${WANDB_EXP_NAME}"
 
-    ## local run
-    export WORLD_SIZE=8
-    export MASTER_ADDR=node0
-    export MASTER_PORT=23458
-    torchrun --nproc-per-node $WORLD_SIZE \
-    -m apps.main.train \
-    config=apps/main/configs/${CONFIG}.yaml
-
-    # ## slurm run
-    # export SLURM_NNODES=1
-    # export PARTITION="batch-exp"
-    # bash ./scripts/run_slurm.sh
+    if [ "$RUN_TYPE" = "local_run" ]; then
+        ## local run
+        torchrun --nproc-per-node $WORLD_SIZE \
+        -m apps.main.train \
+        config=apps/main/configs/${CONFIG}.yaml
+    elif [ "$RUN_TYPE" = "slurm_run" ]; then
+        echo ""
+        # ## slurm run
+        # export SLURM_NNODES=1
+        # export PARTITION="batch-exp"
+        # bash ./scripts/run_slurm.sh
+    fi
 done
 ```

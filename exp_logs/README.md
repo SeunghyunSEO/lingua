@@ -391,6 +391,10 @@ done
 
 ![max_activation_value_growth](assets/images/lingua_sanity_check/max_activation_value_growth.png)
 
+- p.s.) reference paper for l2 norm of residual branch matters in training stability
+    - [Methods of improving LLM training stability](https://arxiv.org/abs/2410.16682)
+
+![magnitude_of_residual_proj_layers_matters_nvidia_paper](assets/images/lingua_sanity_check/magnitude_of_residual_proj_layers_matters_nvidia_paper.png)
 
 ## muTransfer exp (actual training with fineweb 5B tokens)
 

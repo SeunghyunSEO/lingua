@@ -383,7 +383,7 @@ done
 ![mup_qknorm_attn_logits_fig1](assets/images/lingua_sanity_check/mup_qknorm_attn_logits_fig1.png)
 
 - and idk why gemma use residual post norm (`x = x + postnorm(ffn(prenorm(x)))`) clearly, but you can check l2 norm of final output of transformer residual blocks is very small compared to others (even qk_norm).
-    - i guess it can reduce massive activation norms and improve training stability a lot in large scale.
+    - i guess it can reduce [massive activation norms](https://arxiv.org/abs/2402.17762v1) and improve training stability a lot in large scale.
 
 ![mup_residual_post_norm_attention_residual_l2_fig1](assets/images/lingua_sanity_check/mup_residual_post_norm_attention_residual_l2_fig1.png)
 

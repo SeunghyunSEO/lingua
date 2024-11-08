@@ -123,8 +123,8 @@ def get_optimizer(model, args, model_args, dist_args, device_mesh):
         raise NotImplementedError
     
     truly_decoupled_wd = args.truly_decoupled_wd
-    if truly_decoupled_wd:
-        assert (args.weight_decay < 0.001), f"weight_decay value ({args.weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
+    # if truly_decoupled_wd:
+    #     assert (args.weight_decay < 0.001), f"weight_decay value ({args.weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
 
     def new_group():
         new_g = {

@@ -23,22 +23,19 @@ def adjust_hidden_dim(hidden_dim, ffn_dim_multiplier, multiple_of):
     hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
     return hidden_dim
 
-def get_optimizer(model, args, model_args):
-    opt_cls = AdamW
-    truly_decoupled_wd = args.truly_decoupled_wd
-    if truly_decoupled_wd:
-        assert (args.weight_decay < 0.001), f"weight_decay value ({args.weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
+def get_optimizer(model, lr, weight_decay, adam_beta1, adam_beta2, optimizer_name, truly_decoupled_wd=False):
+    opt_cls = torch.optim.AdamW
 
     def new_group():
         new_g = {
-            'lr': args.lr,
-            'weight_decay': args.weight_decay,
+            'lr': lr,
+            'weight_decay': weight_decay,
         }
         new_g['params'] = []
         return new_g
     def new_group_():
         new_g = {
-            'lr': args.lr,
+            'lr': lr,
             'weight_decay': 0.,
         }
         new_g['params'] = []
@@ -47,29 +44,29 @@ def get_optimizer(model, args, model_args):
     no_decay_name_list = ["bias", "norm", "scaler"]
     optimizer_grouped_parameters = []
     opt_kwargs = {
-        'betas': (args.beta1, args.beta2),
-        'eps': args.epsilon,
+        'betas': (adam_beta1, adam_beta2),
+        'eps': 1e-8,
         'fused': True,
     }
 
-    if model_args.mup:
+    if model.args.mup:
 
         ## proxy model's configs
-        base_dim = model_args.base_dim or int(model_args.base_head_dim * model_args.base_n_heads)
-        base_head_dim = model_args.base_head_dim or int(model_args.base_dim // model_args.base_n_heads)
+        base_dim = model.args.base_dim or int(model.args.base_head_dim * model.args.base_n_heads)
+        base_head_dim = model.args.base_head_dim or int(model.args.base_dim // model.args.base_n_heads)
         base_ffn_hidden_dim = adjust_hidden_dim(
             4*base_dim, 
-            model_args.base_ffn_dim_multiplier, 
-            model_args.base_multiple_of,
+            model.args.base_ffn_dim_multiplier, 
+            model.args.base_multiple_of,
         )
 
         ## target model's configs
-        dim = model_args.dim or int(model_args.head_dim * model_args.n_heads)
-        head_dim = model_args.head_dim or int(model_args.dim // model_args.n_heads)
+        dim = model.args.dim or int(model.args.head_dim * model.args.n_heads)
+        head_dim = model.args.head_dim or int(model.args.dim // model.args.n_heads)
         ffn_hidden_dim = adjust_hidden_dim(
             4*dim, 
-            model_args.ffn_dim_multiplier, 
-            model_args.multiple_of
+            model.args.ffn_dim_multiplier, 
+            model.args.multiple_of
         )
         
         matrix_like_p = defaultdict(new_group) # key is width_mult

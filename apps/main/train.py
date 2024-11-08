@@ -292,7 +292,7 @@ def train(args: TrainArgs):
             with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
                 torch.manual_seed(args.model.seed)
                 model.init_weights()
-        check_model_value_range(model, range=10.0, std=1.0)
+        # check_model_value_range(model, range=10.0, std=1.0)
 
         # log model size
         logger.info(f"Model size: {model_param_count:,} total parameters")

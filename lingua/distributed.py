@@ -420,22 +420,12 @@ def parallelize_model(
         mesh=(
             device_mesh["dp_replicate", "dp_shard"]
             if distributed_args.dp_shard > 1
-            or distributed_args.fsdp_type == "no_shard"
+            or distributed_args.fsdp_type == "full_shard"
             else device_mesh["dp_replicate"]
         )
         fsdp_config = {"mesh": mesh, "mp_policy": mp_policy}
 
-        ## ver1
-        # for layer_id, residual_block in enumerate(model.layers):
-        #     reshard_after_forward = int(layer_id) < len(model.layers) - 1
-        #     fully_shard(
-        #         residual_block,
-        #         **fsdp_config,
-        #         reshard_after_forward=reshard_after_forward,
-        #     )
-        # fully_shard(model, **fsdp_config, reshard_after_forward=True)
-
-        ## og ver
+        ## FSDP2 ver 1
         if fsdp_grouping_plan is None:
             # Assume that the model has list of layers and group around it
             fsdp_grouping_plan = default_fsdp_grouping_plan(len(model.layers))
@@ -450,6 +440,17 @@ def parallelize_model(
                 ),
             )
         model = fully_shard(model, **fsdp_config, reshard_after_forward=True)
+
+        ## FSDP2 ver 2
+        # for layer_id, residual_block in enumerate(model.layers):
+        #     reshard_after_forward = int(layer_id) < len(model.layers) - 1
+        #     fully_shard(
+        #         residual_block,
+        #         **fsdp_config,
+        #         reshard_after_forward=reshard_after_forward,
+        #     )
+        # fully_shard(model, **fsdp_config, reshard_after_forward=True)
+
         
     else:
         ## FSDP 2, https://github.com/pytorch/torchtitan/blob/main/docs/fsdp.md

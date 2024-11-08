@@ -124,6 +124,9 @@ def plot_coord_check(
     base_nhead = nheads[0]
     base_kv_nhead = kv_nheads[0]
 
+    if not mup:
+        init_std = None
+
     models = {
         int(width * nhead): get_lazy_model(
             width, nhead, kv_nhead,

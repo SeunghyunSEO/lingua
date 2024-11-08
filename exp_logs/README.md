@@ -1,4 +1,12 @@
-# TODO
+# Status
+
+## some notes
+
+- currently there is fsdp integration issue with dmoe and shampoo. 
+- and MFU of shampoo sucks (maybe my skill issue)
+- nGPT seems not working (maybe my skill issue)
+
+## TODO (Ongoing)
 
 - [x] test run
 - [x] mup
@@ -18,6 +26,20 @@
 - [ ] enabling dist shampoo in trainer
     - [x] with fsdp
 
+## additional TODO
+
+- [ ] qknorm
+    - [x] impl and test
+    - [ ] sweep
+- [ ] residual post norm (swin, chameleon, gemma)
+    - [x] impl and test
+    - [x] sweep
+- [ ] nGPT
+    - [x] impl and test
+    - [ ] sweep
+- [ ] residual value
+    - [x] impl and test
+    - [ ] sweep
 
 # example run
 
@@ -43,8 +65,8 @@ pip install -r requirements.txt
 
 ```bash
 # cd /path/to/dir/lingua
-# python ./setup/download_prepare_hf_data.py fineweb_edu_10bt
-python ./setup/download_prepare_hf_data.py dclm_baseline_1.0
+# python ./setup/download_prepare_hf_data.py dclm_baseline_1.0
+python ./setup/download_prepare_hf_data.py fineweb_edu_10bt
 ```
 
 ```bash
@@ -130,7 +152,9 @@ node0:23440:23664 [0] NCCL INFO ncclCommInitRank comm 0x563d5b2b3360 rank 0 nran
 
 ## coord check using mup native codes
 
-- example code
+### example code
+
+<details>
 
 ```python
 # cd /path/to/dir/lingua
@@ -170,6 +194,8 @@ args.update(opt_args)
 plot_coord_check(**args)
 ```
 
+</details>
+
 ### SP
 
 ![_SP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_False_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
@@ -190,34 +216,64 @@ plot_coord_check(**args)
 
 ![MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_True_residual_post_norm_True_customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_True_residual_post_norm_True_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
 
+### nGPT (WIP)
+
+![SP_varying_nhead_gqa_True_basestd_None_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_False_residual_post_norm_False_ngpt_True_customized_adamw_wd_0.01_b1_0.9_b2_0.95_](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_True_basestd_None_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_False_residual_post_norm_False_ngpt_True_customized_adamw_wd_0.01_b1_0.9_b2_0.95_.png)
+
 
 ## coord check using lingua app
 
+### bash command
+
+<details>
+
 ```bash
+# 1gpu test
 export WORLD_SIZE=1
 export MASTER_ADDR=node0
 export MASTER_PORT=23458
-
-export COMPILE=true
 export DP_DEGREE=1
 export DP_SHARD_DEGREE=1
 export TP_DEGREE=1
 export FSDP_TYPE=no_shard
+export COMPILE=true
+
+# ## 2gpu fsdp test
+# export WORLD_SIZE=2
+# export MASTER_ADDR=node0
+# export MASTER_PORT=23458
+# export DP_DEGREE=1
+# export DP_SHARD_DEGREE=2
+# export TP_DEGREE=1
+# export FSDP_TYPE=full_shard
+# export COMPILE=true
+
+# export MUP=false
+# export INIT_BASE_STD=0
+# export INIT_STD_FACTOR=global_depth
 
 export MUP=true
-export INIT_STD_FACTOR=global_depth
 export INIT_BASE_STD=0.04419 # 1/sqrt(512)
-# export INIT_BASE_STD=0.0883 # 1/sqrt(128)
-
+export INIT_STD_FACTOR=global_depth
 # export BASE_N_HEADS=4
 # export BASE_N_KV_HEADS=1
 export BASE_N_HEADS=4
 export BASE_N_KV_HEADS=4
 
-export N_HEADS_=(4 8 16)
+export N_HEADS_=(4)
+# export N_HEADS_=(4 8 16)
 
+# export OPT_CLS_NAME="adamw"
+export OPT_CLS_NAME="shampoo"
+
+export LR=0.01
 export WEIGHT_DECAY=0.0
+# export WEIGHT_DECAY=0.1
 export TRULY_DECOUPLED_WD=false
+# export TRULY_DECOUPLED_WD=true
+if [ "$TRULY_DECOUPLED_WD" = "true" ]; then
+    export WEIGHT_DECAY=$(echo "scale=8; $LR*0.1" | bc)
+fi
 
 ############################################################
 export QK_NORM=false
@@ -226,15 +282,16 @@ export RES_POST_NORM=false
 # export RES_POST_NORM=true
 
 ############################################################
-# export NGPT=false
-export NGPT=true
-export QK_NORM=false
-export RES_POST_NORM=false
-export MUP=false
-export INIT_BASE_STD=0 # 1/sqrt(d_model)
-export INIT_STD_FACTOR=global_depth
-export WARMUP=0
-export WEIGHT_DECAY=0.0
+export NGPT=false
+
+# export NGPT=true
+# export QK_NORM=false
+# export RES_POST_NORM=false
+# export MUP=false
+# export INIT_BASE_STD=0 # 1/sqrt(d_model)
+# export INIT_STD_FACTOR=global_depth
+# export WARMUP=0
+# export WEIGHT_DECAY=0.0
 ############################################################
 
 export STEPS=20
@@ -246,10 +303,6 @@ export PROBE_FREQ=1
 export PROBE_WANDB=true
 export PROFILING_RUN=false
 
-export LR=0.01
-
-SUFFIX=''
-
 ############################################################
 export CONFIG=llama_8B_proxy
 export WANDB_PROJECT_NAME="lingua_sanity_check"
@@ -259,10 +312,8 @@ for N_HEADS in "${N_HEADS_[@]}"; do
     export N_KV_HEADS=$N_HEADS
     # export N_KV_HEADS=$((N_HEADS / 4))
 
-    WANDB_EXP_NAME="mup_coord_check_${MUP}_nhead_${N_HEADS}_nkvhead_${N_KV_HEADS}_basenhead_${BASE_N_HEADS}_basenkvhead_${BASE_N_KV_HEADS}"
-    WANDB_EXP_NAME="${WANDB_EXP_NAME}_qknorm_${QK_NORM}_resnorm_${RES_POST_NORM}"
-     WANDB_EXP_NAME="${WANDB_EXP_NAME}_ngpt_${NGPT}"
-    WANDB_EXP_NAME="${WANDB_EXP_NAME}${SUFFIX}"
+    CURRENT_TIME=$(date +'%Y%m%d_%H%M%S')
+    WANDB_EXP_NAME="coord_check_${CURRENT_TIME}"
     export WANDB_EXP_NAME=$WANDB_EXP_NAME
     export DUMP_DIR="exp_logs/assets/logs/${WANDB_EXP_NAME}"
     torchrun --nproc-per-node $WORLD_SIZE \
@@ -271,25 +322,76 @@ for N_HEADS in "${N_HEADS_[@]}"; do
 done
 ```
 
-- start with multi head attention (MHA) setting, not grouped query attention (GQA)
-- head_dim=128 is fixed and varying number of heads 
-- 20 steps optimization and record
-- high enough lr=0.01 for sanity check
-- adamw with betas=(0.9, 0.95), weight decay: 0.0
-- zero init query and readout layers
-- comparison between qknorm + residual post norm (swin transformer / chameleon / gemma style) vs vanilla
-- lol, i forgot to inject residual post norm to attention out proj layer 
+</details>
 
-![lingua_mup_sanity_check_act_l2](assets/images/lingua_mup_sanity_check_act_l2.png)
+### observations
 
-![lingua_mup_sanity_check_weight_std](assets/images/lingua_mup_sanity_check_weight_std.png)
+- watch [my wandb logs](https://wandb.ai/seosh7039/lingua_sanity_check/workspace?nw=nwuserseosh7039)
+- sanity check setup
+    - start with multi head attention (MHA) setting, not grouped query attention (GQA)
+    - all models have same depth (32 layers like other open weight 8b models)
+    - head_dim=128 is fixed and varying number of heads 
+    - 20 steps optimization and record
+    - high enough lr=0.01 for sanity check (no warmup, cosine anneal to 0.1 of peak lr for realistic setting?)
+    - adamw with betas=(0.9, 0.95), weight decay: 0.0
+    - zero init query and readout layers
+    - comparisons of SP baseline / muP baseline / mup + qknorm / mup + residual post norm (swin transformer / chameleon / gemma style)
 
-![lingua_mup_sanity_check_lr_wd](assets/images/lingua_mup_sanity_check_lr_wd.png)
+- firstly you can check initial std of all layers thanks to lingua's probing feature.
+    - you can check if you implement mup well and it looks good. 
+    - vanilla fan-in varaiance for smalled proxy model, and `base_std/sqrt(width/base_width)` for wider models
 
-![lingua_mup_sanity_check_mem](assets/images/lingua_mup_sanity_check_mem.png)
+![mup_varying_nhead_weight_std_fig1](./assets/images/lingua_sanity_check/mup_varying_nhead_weight_std_fig1.png)
+
+- you can check activation l2 norm of all layers
+    - it seems not blown up according to width 
+
+![mup_varying_nhead_activation_l2_fig1](./assets/images/lingua_sanity_check/mup_varying_nhead_activation_l2_fig1.png)
+*Fig. muP FFN module layers*
+
+![mup_varying_nhead_activation_l2_fig2](./assets/images/lingua_sanity_check/mup_varying_nhead_activation_l2_fig2.png)
+*Fig. muP attention module layers*
+
+![mup_varying_nhead_attn_logits_fig1](./assets/images/lingua_sanity_check/mup_varying_nhead_attn_logits_fig1.png)
+*Fig. muP attention logits*
+
+- here's my previous coord check reference
+
+![_SP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+*Fig. SP coordinate check*
+
+![_MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
+*Fig. muP coordinate check*
+
+- now let's check SP 
+    - it looks like started from same fan-in variance std, but show different trajectory 
+
+![sp_vs_mup_weight_std_fig1](assets/images/lingua_sanity_check/sp_vs_mup_weight_std_fig1.png)
+
+- and some layer's activation l2 norm starts to blow up
+
+![sp_vs_mup_activation_l2_fig1](assets/images/lingua_sanity_check/sp_vs_mup_activation_l2_fig1.png)
+
+- attention logits looks bad too.
+
+![sp_vs_mup_attn_logits_fig1](assets/images/lingua_sanity_check/sp_vs_mup_attn_logits_fig1.png)
+
+- now let's verify qk_norm and residual post norm is working or not
+    - like [Scaling Vision Transformers to 22 Billion Parameters](https://arxiv.org/abs/2302.05442) said, you can check qk_norm relax l2 norm of attn logits a lot
+
+![mup_qknorm_attn_logits_fig1](assets/images/lingua_sanity_check/mup_qknorm_attn_logits_fig1.png)
+
+- and idk why gemma use residual post norm (`x = x + postnorm(ffn(prenorm(x)))`) clearly, but you can check l2 norm of final output of transformer residual blocks is very small compared to others (even qk_norm).
+    - i guess it can reduce massive activation norms and improve training stability a lot in large scale.
+
+![mup_residual_post_norm_attention_residual_l2_fig1](assets/images/lingua_sanity_check/mup_residual_post_norm_attention_residual_l2_fig1.png)
 
 
-## muTransfer exp
+## muTransfer exp (actual training with fineweb 5B tokens)
+
+### bash command
+
+<details>
 
 ```bash
 ############################################################
@@ -301,10 +403,10 @@ export INIT_BASE_STD=0.04419 # 1/sqrt(512)
 export BASE_N_HEADS=4
 export BASE_N_KV_HEADS=1
 
-# export N_HEADS=4
-# export N_KV_HEADS=1
-export N_HEADS=8
-export N_KV_HEADS=2
+export N_HEADS=4
+export N_KV_HEADS=1
+# export N_HEADS=8
+# export N_KV_HEADS=2
 # export N_HEADS=16
 # export N_KV_HEADS=4
 # export N_HEADS=32
@@ -331,7 +433,7 @@ if [ "$RUN_TYPE" = "local_run" ]; then
     export WORLD_SIZE=8
     export MASTER_ADDR=node0
     export MASTER_PORT=23458
-
+        
     if [ "$N_HEADS" -eq 4 ]; then
         export DP_DEGREE=8
         export DP_SHARD_DEGREE=1
@@ -363,11 +465,12 @@ elif [ "$RUN_TYPE" = "slurm_run" ]; then
 fi
 
 ############################################################
-export OPT_CLS_NAME='adamw'
-# export OPT_CLS_NAME='shampoo'
+# export OPT_CLS_NAME='adamw'
+export OPT_CLS_NAME='shampoo'
 
 export WEIGHT_DECAY=0.1
 export TRULY_DECOUPLED_WD=false
+# export TRULY_DECOUPLED_WD=true
 
 ############################################################
 export QK_NORM=false
@@ -395,7 +498,7 @@ export PROFILING_RUN=false
 
 ############################################################
 # LRS=(0.00391)
-# LRS=(0.00195)
+LRS=(0.00195)
 # LRS=(0.00098 0.00195 0.00781)
 # LRS=( # low resolution sweep / 2^-13 ~ 2^-4
 #         0.000061 0.000122 0.00024 0.00049
@@ -409,16 +512,29 @@ export PROFILING_RUN=false
 #         0.00391 0.00781
 #         0.01562 0.03125
 # )
-LRS=( # narrow range (only basin)
-    0.00098 0.00195
-    0.00391 0.00781
-)
+# LRS=( # narrow range (only basin)
+#     0.00098 0.00195
+#     0.00391 0.00781
+# )
 # LRS=( # high resolution sweep / 2^-13 ~ 2^-4
 #         0.000061 0.000122 0.00024 0.00049
 #         0.00098 0.00138 0.00195 0.00276
 #         0.00391 0.00552 0.00781 0.01105
 #         0.01562 0.03125 0.0625
 # )
+
+## for test
+export WORLD_SIZE=2
+export MASTER_ADDR=node0
+export MASTER_PORT=23458
+export DP_DEGREE=1
+export DP_SHARD_DEGREE=2
+export TP_DEGREE=1
+export FSDP_TYPE=full_shard
+export BSZ=4
+export ACCUM=4
+export MUP=false
+export INIT_BASE_STD=0
 
 ############################################################
 export CONFIG=llama_8B_proxy
@@ -453,3 +569,17 @@ for LR in "${LRS[@]}"; do
     fi
 done
 ```
+
+</details>
+
+### observations (ongoing)
+
+- wider is always better with muP
+
+![mup_wider_is_always_better_fig1](assets/images/lingua_sanity_check/mup_wider_is_always_better_fig1.png)
+
+![mup_wider_is_always_better_activation_l2_fig1](assets/images/lingua_sanity_check/mup_wider_is_always_better_activation_l2_fig1.png)
+
+- MFU looks good (but i didnt care small scale models's setup much)
+
+![mup_wider_is_always_better_mfu_fig1](assets/images/lingua_sanity_check/mup_wider_is_always_better_mfu_fig1.png)

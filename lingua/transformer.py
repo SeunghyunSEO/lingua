@@ -79,6 +79,17 @@ class BaseTransformerArgs:
     ngpt: bool = False
 
     ########################################
+    '''
+    https://arxiv.org/abs/2410.17897
+    https://github.com/Zcchill/Value-Residual-Learning/tree/main
+    https://x.com/Grad62304977/status/1854295837741809933
+    https://github.com/KellerJordan/modded-nanogpt/tree/master/records/110624_ShortcutsTweaks#value-residual
+    '''
+    residual_value: bool = False
+    # residual_value_lambda_learnable: bool = False
+
+    ########################################
+    # TODO
     use_moe: bool = False
     moe_dropless: bool = False
     moe_num_experts: int = 8
@@ -108,7 +119,7 @@ def l2_norm(
     if norm_eps == 0.0:
         x = F.normalize(x, dim = dim, p = 2)
     else:
-        eps = default(eps, 1e-5 if t.dtype == torch.float16 else 1e-10)
+        eps = default(eps, 1e-5 if x.dtype == torch.float16 else 1e-10)
         norm = x.norm(dim = dim, keepdim = True)
         target_norm = norm.detach().clamp(min = 1.0 - norm_eps, max = 1.0 + norm_eps)
         divisor = norm / target_norm
@@ -120,10 +131,11 @@ class Scaler(nn.Module):
         self, 
         dim: int, 
         scale: float, 
-        scale_init: float = None
+        scale_init: float = 1.0,
     ):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(dim))
+        # self.weight = nn.Parameter(torch.full(dim, scale_init))
         self.scale = scale
         self.scale_init = scale_init
 
@@ -137,7 +149,7 @@ class Scaler(nn.Module):
         return x
 
     def reset_parameters(self):
-        # because model is wrapped with fsdp. directly modify param is not possible?
+        # for sanity check
         if self.scale_init:
             torch.nn.init.normal_(self.weight, mean=self.scale_init, std=0.0)
         else:
@@ -477,6 +489,17 @@ class Attention(nn.Module):
             # self.q_scaler = Scaler(dim=(self.n_heads//self.tp_size, self.head_dim), scale=self.d_model**-0.5)
             # self.k_scaler = Scaler(dim=(self.n_kv_heads//self.tp_size, self.head_dim), scale=self.d_model**-0.5)
 
+        if self.args.residual_value:
+            '''
+            oh wtf? 
+            ValueError: fully_shard doesn't support salar parameters. Change lambda_weight to a 1D tensor with numel equal to 1.
+            '''
+            self.lambda_weight = 0.5
+            # assert not self.args.residual_value_lambda_learnable 
+            # self.lambda_weight = nn.Parameter(torch.tensor(0.5))
+            # if not self.args.residual_value_lambda_learnable:
+            #     self.lambda_weight.requires_grad = False
+
     def forward(
         self,
         x: torch.Tensor,
@@ -484,6 +507,7 @@ class Attention(nn.Module):
         tok_idx: Optional[torch.Tensor] = None,
         mask: Optional[Union[BlockMask, AttentionBias, str]] = None,
         attn_impl: str = "sdpa",
+        v1 = None,
     ) -> torch.Tensor:
         # B S D
         bsz, seq_len, dim = x.shape
@@ -565,6 +589,11 @@ class Attention(nn.Module):
             elif self.args.ngpt:
                 sdpa_scale = float(self.head_dim) ** 0.5
 
+        if self.args.residual_value and (v1 is not None):
+            v1 = v1.transpose(1,2) # B H T C -> B T H C again
+            assert xv.size() == v1.size(), f"xv.size() ({xv.size()}) and v1.size() ({v1.size()}) are not same"
+            xv = (1-self.lambda_weight) * xv + self.lambda_weight * v1
+
         if attn_impl == "flex_attention":
             assert mask is None or isinstance(mask, BlockMask)
             xq, xk, xv = map(lambda e: e.transpose(1, 2), (xq, xk, xv))
@@ -599,7 +628,10 @@ class Attention(nn.Module):
         if self.args.residual_post_norm:
             output = self.o_norm(output)
 
+        if self.args.residual_value:
+            return (output, xv)
         return output
+            
 
     def reset_parameters(self, init_std=None, factor=1.0):
 
@@ -608,10 +640,6 @@ class Attention(nn.Module):
             assert InitStdFactor(self.args.init_std_factor) in [InitStdFactor.GLOBAL_DEPTH, InitStdFactor.CURRENT_DEPTH]
 
             base_dim = self.args.base_dim or int(self.args.base_head_dim * self.args.base_n_heads)
-            base_head_dim = self.args.base_head_dim or int(self.args.base_dim // self.args.base_n_heads)
-
-            # in_proj_scale = float(self.head_dim/base_head_dim) ** -0.5
-            # out_proj_scale = float(self.head_dim/base_head_dim) ** -0.5
             in_proj_scale = float(self.dim/base_dim) ** -0.5
             out_proj_scale = float(self.dim/base_dim) ** -0.5
 
@@ -628,7 +656,7 @@ class Attention(nn.Module):
                 a=-3 * init_std *in_proj_scale,
                 b=3 * init_std *in_proj_scale,
             )
-        if self.args.query_zero_init:
+        if self.args.mup and self.args.query_zero_init:
             nn.init.zeros_(self.wq.weight)
             # self.wq.weight.data.zero_()
         
@@ -641,15 +669,21 @@ class Attention(nn.Module):
         )
 
         if self.args.qk_norm:
+            assert not self.args.ngpt
             self.q_norm.reset_parameters()
             self.k_norm.reset_parameters()
 
         if self.args.residual_post_norm:
+            assert not self.args.ngpt
             self.o_norm.reset_parameters()
 
         if self.args.ngpt:
             self.q_scaler.reset_parameters()
             self.k_scaler.reset_parameters()
+
+        # if self.args.residual_value:
+        #     ## for sanity check
+        #     torch.nn.init.normal_(self.lambda_weight, mean=0.5, std=0.0)
 
 def adjust_hidden_dim(hidden_dim, ffn_dim_multiplier, multiple_of):
     '''
@@ -803,7 +837,6 @@ class FeedForward(nn.Module):
             x1 = self.w1(x.view_as(x))
             x3 = self.w3(x.view_as(x))
 
-
             if self.args.ngpt:
                 x3 = self.u_scaler(x3) # ngpt paper (20)
                 x1 = self.v_scaler(x1, additional_scaler = self.d_model ** 0.5) # ngpt paper (21)
@@ -866,7 +899,6 @@ class FeedForward(nn.Module):
                 a=-3 * in_init_std *in_proj_scale,
                 b=3 * in_init_std *in_proj_scale,
             )
-
 
             ## bias
             if self.moe.experts.bias is not None:
@@ -941,42 +973,51 @@ class TransformerBlock(nn.Module):
         tok_idx: Optional[torch.Tensor] = None,
         mask: Optional[Union[BlockMask, AttentionBias, str]] = None,
         attn_impl: str = "sdpa",
+        v1 = None,
     ) -> torch.Tensor:
 
         if self.args.ngpt:
-            x = l2_norm(
-                x + self.attention_scaler(
-                    l2_norm(
-                        self.attention(
-                            x,
-                            freq_cis,
-                            tok_idx=tok_idx,
-                            mask=mask,
-                            attn_impl=attn_impl,
-                        )
-                    ) - x
-                )  # ngpt paper (10), table 1
+            attn_out = self.attention(
+                x,
+                freq_cis,
+                tok_idx=tok_idx,
+                mask=mask,
+                attn_impl=attn_impl,
+                v1=v1,
             )
+            if self.args.residual_value and isinstance(attn_out, Tuple):
+                attn_out, xv = attn_out
             x = l2_norm(
-                x + self.ffn_scaler(
-                    l2_norm(
-                        self.feed_forward(x)
-                    ) - x
-                )  # ngpt paper (11), table 1
+                x + self.attention_scaler(l2_norm(attn_out) - x)  # ngpt paper (10), table 1
             )
+            ffn_out = self.feed_forward(x)
+            x = l2_norm(
+                x + self.ffn_scaler(l2_norm(ffn_out) - x)  # ngpt paper (11), table 1
+            )
+            if self.args.residual_value:
+                return (x, xv)
             return x
         else:
-            h = x + self.attention(
+            attn_out = self.attention(
                 self.attention_norm(x),
                 freq_cis,
                 tok_idx=tok_idx,
                 mask=mask,
                 attn_impl=attn_impl,
+                v1=v1,
             )
-            out = h + self.feed_forward(self.ffn_norm(h))
-            return out
+            if self.args.residual_value and isinstance(attn_out, Tuple):
+                attn_out, xv = attn_out
+            x = x + attn_out
+            ffn_out = self.feed_forward(self.ffn_norm(x))
+            x = x + ffn_out
+            if self.args.residual_value:
+                return (x, xv)
+            return x
 
     def init_weights(self, init_std=None, factor=1.0):
+        d_model = self.args.dim or int(self.args.n_heads * self.args.head_dim)
+        init_std = init_std or (d_model ** (-0.5))
         self.attention.reset_parameters(init_std, factor)
         self.feed_forward.reset_parameters(init_std, factor)
 
@@ -1010,6 +1051,15 @@ class BaseTransformer(nn.Module):
         for _ in range(args.n_layers):
             self.layers.append(TransformerBlock(args))
 
+        ## caching v1 for resformer
+        self.v1 = None
+
+    def clear_v1(self):
+        self.v1 = None
+
+    def set_v1(self, v1):
+        self.v1 = v1
+
     def forward(
         self,
         h,
@@ -1017,11 +1067,16 @@ class BaseTransformer(nn.Module):
         mask: Optional[Union[BlockMask, AttentionBias, str]] = None,
         attn_impl: str = "sdpa",
     ):
-
         freq_cis = self.rope_embeddings(seqlen=self.max_seqlen, tok_idx=tok_idx)
 
         for i, layer in enumerate(self.layers):
-            h = layer(h, freq_cis, tok_idx=tok_idx, mask=mask, attn_impl=attn_impl)
+            h = layer(h, freq_cis, tok_idx=tok_idx, mask=mask, attn_impl=attn_impl, v1=self.v1)
+            if self.args.residual_value and isinstance(h, Tuple):
+                h, xv = h
+                if i == 0:
+                    self.set_v1(xv)
+        if self.args.residual_value:
+            self.clear_v1()
         return h
 
     def reset_parameters(self):

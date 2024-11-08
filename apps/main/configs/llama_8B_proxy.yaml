@@ -108,6 +108,9 @@ model:
   ngpt: ${oc.env:NGPT}
 
   ########################################
+  # residual_value: true
+
+  ########################################
   # use_moe: true
   # moe_dropless: true
   # moe_num_experts: 8

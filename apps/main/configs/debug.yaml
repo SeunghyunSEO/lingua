@@ -1,4 +1,4 @@
-# Template config, need to change dump_dir, data.root_dir and tokenizer.path
+# Template config, need to change dump_dir, data.root_dir and data.tokenizer.path
 
 # dump_dir: !!CHANGETHIS!!
 name: "debug"

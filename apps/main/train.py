@@ -252,7 +252,7 @@ def train(args: TrainArgs):
         logger.info(f"args: {args}")
 
         torch.manual_seed(args.seed)
-        logger.info(f"Building model")
+        logger.info("Building model")
 
         # Initializing Model in meta device allows us to initialize models much bigger than 1 gpu's memory
         if args.model.init_base_std == 0.0:
@@ -263,7 +263,7 @@ def train(args: TrainArgs):
         # https://pytorch.org/docs/stable/meta.html
         with torch.device("meta"):
             model = LMTransformer(args.model)
-        logger.info(f"Model is built !")
+        logger.info("Model is built !")
 
         model_param_count = get_num_params(model)
 

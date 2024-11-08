@@ -9,7 +9,7 @@
 ## TODO (Ongoing)
 
 - [x] test run
-- [x] mup
+- [x] [muP](https://arxiv.org/abs/2203.03466)
 - [x] fused kernel patch
     - TBD) fused ce dtensor issue
 - [x] logger
@@ -19,25 +19,26 @@
         - already exists
     - [x] param norm 
         - already exists
-- [ ] enabling dmoe in trainer
-    - [x] test dmoe with parallelism
+- [ ] enabling [Megablocks Dropless MoE (dMoE)](https://arxiv.org/abs/2211.15841) in trainer
+    - [x] test dmoe with naive parallelism
     - [ ] with fsdp
     - [ ] implement EP with fsdp
-- [ ] enabling dist shampoo in trainer
+- [ ] enabling [disttributed shampoo](https://arxiv.org/abs/2309.06497) in trainer
     - [x] with fsdp
+        - but it does not work in lingua app (...?)
 
 ## additional TODO
 
-- [ ] qknorm
+- [ ] [qknorm](https://arxiv.org/abs/2302.05442)
     - [x] impl and test
     - [ ] sweep
-- [ ] residual post norm (swin, chameleon, gemma)
+- [ ] [residual post norm](https://arxiv.org/abs/2111.09883) (swin, chameleon, gemma)
     - [x] impl and test
     - [x] sweep
-- [ ] nGPT
+- [ ] [nGPT](https://arxiv.org/abs/2410.01131)
     - [x] impl and test
     - [ ] sweep
-- [ ] residual value
+- [ ] [residual value](https://arxiv.org/abs/2410.17897)
     - [x] impl and test
     - [ ] sweep
 
@@ -574,6 +575,15 @@ done
 
 ### observations (ongoing)
 
+- LR sweep (24. 11. 08 intermediate result)
+    - pls read the notes on plot
+    - it seems residual post norm reduces lr sensitivity lil bit in smallest scale, but there is some performance degradation
+    - but i think it could be different in large scale pre-training because of stability and precision.
+        - like weight decay contribution to better performance is due to stability improvement in modern llm regime
+            - [Why Do We Need Weight Decay in Modern Deep Learning?](https://arxiv.org/abs/2310.04415)
+
+![mup_sweep_241108_plot](assets/images/mup_sweep/mup_sweep_241108_plot.png)
+
 - wider is always better with muP
 
 ![mup_wider_is_always_better_fig1](assets/images/lingua_sanity_check/mup_wider_is_always_better_fig1.png)
@@ -583,7 +593,3 @@ done
 - MFU looks good (but i didnt care small scale models's setup much)
 
 ![mup_wider_is_always_better_mfu_fig1](assets/images/lingua_sanity_check/mup_wider_is_always_better_mfu_fig1.png)
-
-- LR sweep (24. 11. 08 intermediate result)
-
-![mup_sweep_241108_plot](assets/images/mup_sweep/mup_sweep_241108_plot.png)

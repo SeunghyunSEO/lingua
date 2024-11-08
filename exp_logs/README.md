@@ -387,6 +387,10 @@ done
 
 ![mup_residual_post_norm_attention_residual_l2_fig1](assets/images/lingua_sanity_check/mup_residual_post_norm_attention_residual_l2_fig1.png)
 
+- (actviation value was fine in initialization but starts to blow up)
+
+![max_activation_value_growth](assets/images/lingua_sanity_check/max_activation_value_growth.png)
+
 
 ## muTransfer exp (actual training with fineweb 5B tokens)
 

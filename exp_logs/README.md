@@ -583,3 +583,7 @@ done
 - MFU looks good (but i didnt care small scale models's setup much)
 
 ![mup_wider_is_always_better_mfu_fig1](assets/images/lingua_sanity_check/mup_wider_is_always_better_mfu_fig1.png)
+
+- LR sweep (24. 11. 08 intermediate result)
+
+![mup_sweep_241108_plot](assets/images/mup_sweep/mup_sweep_241108_plot.png)

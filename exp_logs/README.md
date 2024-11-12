@@ -4,7 +4,6 @@
 
 - currently there is fsdp integration issue with dmoe and shampoo. 
 - and MFU of shampoo sucks (maybe my skill issue)
-- nGPT seems not working (maybe my skill issue)
 
 ## TODO (Ongoing)
 
@@ -597,7 +596,7 @@ done
         - like weight decay contribution to better performance is due to stability improvement in modern llm regime
             - [Why Do We Need Weight Decay in Modern Deep Learning?](https://arxiv.org/abs/2310.04415)
 
-![mup_sweep_241108_plot](assets/images/mup_sweep/mup_sweep_241108_plot.png)
+![mup_sweep_241102_plot](assets/images/mup_sweep/mup_sweep_241102_plot.png)
 
 - wider is always better with muP
 

@@ -176,6 +176,7 @@ args = {
 
     # 'qk_norm': True,
     'qk_norm': False,
+    
     # 'residual_post_norm': True,
     'residual_post_norm': False,
 }
@@ -474,8 +475,8 @@ elif [ "$RUN_TYPE" = "slurm_run" ]; then
 fi
 
 ############################################################
-# export OPT_CLS_NAME='adamw'
-export OPT_CLS_NAME='shampoo'
+export OPT_CLS_NAME='adamw'
+# export OPT_CLS_NAME='shampoo'
 
 export WEIGHT_DECAY=0.1
 export TRULY_DECOUPLED_WD=false
@@ -489,16 +490,20 @@ export RES_POST_NORM=false
 # export RES_POST_NORM=true
 
 ############################################################
-export NGPT=false
+# export NGPT=false
 
-# export NGPT=true
-# export QK_NORM=false
-# export RES_POST_NORM=false
-# export MUP=false
-# export INIT_BASE_STD=0 # 1/sqrt(d_model)
-# export INIT_STD_FACTOR=global_depth
-# export WARMUP=0
-# export WEIGHT_DECAY=0.0
+export NGPT=true
+export QK_NORM=false
+export RES_POST_NORM=false
+export MUP=false
+export INIT_BASE_STD=0 # 1/sqrt(d_model)
+export INIT_STD_FACTOR=global_depth
+export WARMUP=0
+export WEIGHT_DECAY=0.0
+
+############################################################
+export RESIDUAL_VALUE=false
+# export RESIDUAL_VALUE=true
 
 ############################################################
 export PROBE_FREQ=100
@@ -507,7 +512,7 @@ export PROFILING_RUN=false
 
 ############################################################
 # LRS=(0.00391)
-LRS=(0.00195)
+# LRS=(0.00195)
 # LRS=(0.00098 0.00195 0.00781)
 # LRS=( # low resolution sweep / 2^-13 ~ 2^-4
 #         0.000061 0.000122 0.00024 0.00049
@@ -516,15 +521,16 @@ LRS=(0.00195)
 #         0.01562 0.03125 0.0625
 # )
 # LRS=( # narrow range (only basin)
-#         0.00024 0.00049
+#         0.000122 0.00024 0.00049
 #         0.00098 0.00195
 #         0.00391 0.00781
 #         0.01562 0.03125
 # )
 # LRS=( # narrow range (only basin)
-#     0.00098 0.00195
-#     0.00391 0.00781
+#         0.00049 0.00098 
+#         0.00195 0.00391
 # )
+LRS=(0.00195 0.00391 0.00098 0.00049)
 # LRS=( # high resolution sweep / 2^-13 ~ 2^-4
 #         0.000061 0.000122 0.00024 0.00049
 #         0.00098 0.00138 0.00195 0.00276
@@ -532,18 +538,19 @@ LRS=(0.00195)
 #         0.01562 0.03125 0.0625
 # )
 
-## for test
-export WORLD_SIZE=2
-export MASTER_ADDR=node0
-export MASTER_PORT=23458
-export DP_DEGREE=1
-export DP_SHARD_DEGREE=2
-export TP_DEGREE=1
-export FSDP_TYPE=full_shard
-export BSZ=4
-export ACCUM=4
-export MUP=false
-export INIT_BASE_STD=0
+# ## for test
+# LRS=(0.00195)
+# export WORLD_SIZE=2
+# export MASTER_ADDR=node0
+# export MASTER_PORT=23458
+# export DP_DEGREE=1
+# export DP_SHARD_DEGREE=2
+# export TP_DEGREE=1
+# export FSDP_TYPE=full_shard
+# export BSZ=4
+# export ACCUM=4
+# export MUP=false
+# export INIT_BASE_STD=0
 
 ############################################################
 export CONFIG=llama_8B_proxy

@@ -76,6 +76,14 @@ class BaseTransformerArgs:
     tp_size: int = 1
 
     ########################################
+    '''
+    reproducing normalized GPT (nGPT)
+    https://arxiv.org/abs/2410.01131
+
+    https://github.com/lucidrains/nGPT-pytorch/blob/main/nGPT_pytorch/nTransformer.py
+    https://github.com/alxndrTL/modded-nanogpt
+    official impl) https://github.com/NVIDIA/ngpt/blob/main/model.py
+    '''
     ngpt: bool = False
 
     ########################################
@@ -96,12 +104,49 @@ class BaseTransformerArgs:
     moe_top_k: int = 1
 
 ########################################
-'''
-reproducing normalized GPT (nGPT)
-https://arxiv.org/abs/2410.01131
+## nGPT
 
-https://github.com/lucidrains/nGPT-pytorch/blob/main/nGPT_pytorch/nTransformer.py
-https://github.com/alxndrTL/modded-nanogpt
+'''
+following official implementation
+e.g. for attention block, it should be like
+
+1. init
+--------------------------------------------------
+self.attn_alpha_init_value = 0.05
+self.attn_alpha_init_scaling = config.base_scale
+self.attn_alpha = torch.nn.Parameter(self.attn_alpha_init_scaling*torch.ones(self.config.n_embd, dtype=torch.float32))
+
+self.sqk_init_value = 1.0       
+self.sqk_init_scaling = config.base_scale
+self.sqk = torch.nn.Parameter(self.sqk_init_scaling*torch.ones(self.config.n_embd, dtype=torch.float32))
+--------------------------------------------------
+
+2. qk scaling
+--------------------------------------------------
+q, k = apply_rotary_position_embeddings(sinusoidal_pos, q.transpose(1, 2), k.transpose(1, 2))
+sqk = (self.sqk * (self.sqk_init_value/self.sqk_init_scaling)).view(1, 1, self.config.n_head, self.config.n_embd // self.config.n_head)
+q = sqk * self.justnorm(q)  
+k = sqk * self.justnorm(k)  
+--------------------------------------------------
+
+3. sdpa
+--------------------------------------------------
+softmax_scale = sqrt_head_dim 
+y = sdpa(q,k,v,causal=True,scale, ...)
+h_att = self.att_c_proj(y)
+
+4. residual
+--------------------------------------------------
+lr = self.attn_alpha * (self.attn_alpha_init_value / self.attn_alpha_init_scaling)
+lr = torch.abs(lr)
+
+A_norm = self.justnorm(h) # normally, normalization is not needed
+B_norm = self.justnorm(h_att)
+    
+#res = (1.0 - lr) * A_norm + lr * B_norm
+res = A_norm + lr * (B_norm - A_norm)
+h = self.justnorm(res)
+--------------------------------------------------
 '''
 
 def exists(v):
@@ -126,32 +171,49 @@ def l2_norm(
         x = x / divisor.clamp(min = eps)
     return x
 
+# def l2_norm(x):
+#     #return F.normalize(x, p=2, dim=-1)
+#     return x / x.norm(p=2, dim=-1, keepdim=True)
+
 class Scaler(nn.Module):
     def __init__(
         self, 
         dim: int, 
-        scale: float, 
-        scale_init: float = 1.0,
+        scale: float,
+        scale_init: float,
     ):
         super().__init__()
-        self.weight = nn.Parameter(torch.ones(dim))
-        # self.weight = nn.Parameter(torch.full(dim, scale_init))
+        # self.weight = nn.Parameter(torch.ones(dim))
+        self.weight = nn.Parameter(scale * torch.ones(dim)) # not working with fsdp and meta
+        # self.weight = nn.Parameter(torch.full(dim, scale)) # not working with fsdp and meta
+
         self.scale = scale
         self.scale_init = scale_init
 
-    def forward(self, x: torch.Tensor, additional_scaler: float = 1.0):
-        x = (
-            x.float() \
-            * self.weight.float() \
-            * self.scale \
-            * additional_scaler
-        ).type_as(x)
+    def forward(
+        self, 
+        x: torch.Tensor, 
+        additional_scaler: float = 1.0,
+        use_abs_value: bool = False,
+    ):
+        ## fck my mistake, i am confused scale_init and scale
+        ## start from 1.0 or 0.05
+        # print(f'''
+        #     x.max(): {x.max()}
+        #     self.weight.max(): {self.weight.max()}
+        # ''')
+        # eigen_lr = self.weight.float() * (self.scale_init/self.scale) * additional_scaler
+        eigen_lr = self.weight * (self.scale_init/self.scale) * additional_scaler
+        if use_abs_value:
+            eigen_lr = torch.abs(eigen_lr) ## why?
+        # x = (x.float() * eigen_lr).type_as(x)
+        x = (x * eigen_lr).type_as(x)
         return x
 
     def reset_parameters(self):
-        # for sanity check
-        if self.scale_init:
-            torch.nn.init.normal_(self.weight, mean=self.scale_init, std=0.0)
+        # for sanity check FSDP
+        if self.scale:
+            torch.nn.init.normal_(self.weight, mean=self.scale, std=0.0)
         else:
             torch.nn.init.ones_(self.weight)
         
@@ -482,12 +544,28 @@ class Attention(nn.Module):
             # but because it's not normalization operation, we can apply qk_scaler to hidden dim (3d input tensor)
             # oops, because original paper didnt use GQA, they dont need to separate qk_scaler but we should if we want to apply per head
 
-            self.q_scaler = Scaler(dim=(self.n_heads//self.tp_size * self.head_dim), scale=self.d_model**-0.5)
-            self.k_scaler = Scaler(dim=(self.n_kv_heads//self.tp_size * self.head_dim), scale=self.d_model**-0.5)
+            self.q_scaler = Scaler(
+                dim=(self.n_heads//self.tp_size * self.head_dim), 
+                scale=self.d_model**-0.5,
+                scale_init=1.0,
+            )
+            self.k_scaler = Scaler(
+                dim=(self.n_kv_heads//self.tp_size * self.head_dim), 
+                scale=self.d_model**-0.5,
+                scale_init=1.0,
+            )
 
-            ## TODO: there is fsdp bug. it returns 0, 128 size tensor in distributed.py's sanity check routine
-            # self.q_scaler = Scaler(dim=(self.n_heads//self.tp_size, self.head_dim), scale=self.d_model**-0.5)
-            # self.k_scaler = Scaler(dim=(self.n_kv_heads//self.tp_size, self.head_dim), scale=self.d_model**-0.5)
+            # # TODO: there is fsdp bug. it returns 0, 128 size tensor in distributed.py's sanity check routine
+            # self.q_scaler = Scaler(
+            #     dim=(self.n_heads//self.tp_size, self.head_dim), 
+            #     scale=self.d_model**-0.5,
+            #     scale_init=1.0,
+            # )
+            # self.k_scaler = Scaler(
+            #     dim=(self.n_kv_heads//self.tp_size, self.head_dim), 
+            #     scale=self.d_model**-0.5,
+            #     scale_init=1.0,
+            # )
 
         if self.args.residual_value:
             '''
@@ -509,11 +587,26 @@ class Attention(nn.Module):
         attn_impl: str = "sdpa",
         v1 = None,
     ) -> torch.Tensor:
+        
+        # print(f'''
+        #     before proj 
+        #     self.wq.weight.data.mean(): {self.wq.weight.data.mean()} self.wq.weight.data.std(): {self.wq.weight.data.std()}
+        #     x.max(): {x.max()} x.min(): {x.min()}
+        #     mean: {x.mean()} std: {x.std()}
+        #     x dtype: {x.dtype}, wq dtype: {self.wq.weight.dtype}
+        # ''')
+
         # B S D
         bsz, seq_len, dim = x.shape
         xq = self.wq(x.view_as(x))
         xk = self.wk(x.view_as(x))
         xv = self.wv(x.view_as(x))
+
+        # print(f'''
+        #     after proj 
+        #     xq.max(): {xq.max()}
+        #     xk.max(): {xk.max()}
+        # ''')
 
         output_shape = xq.shape
         # B S D -> B S H D
@@ -584,10 +677,10 @@ class Attention(nn.Module):
         sdpa_scale = float(self.head_dim) ** -0.5
         if (self.args.mup) or (self.args.ngpt):
             assert attn_impl == "sdpa"
-            if self.args.mup:
-                sdpa_scale = float(self.head_dim) ** -1.0
-            elif self.args.ngpt:
+            if self.args.ngpt: # in case mup and ngpt used together
                 sdpa_scale = float(self.head_dim) ** 0.5
+            elif self.args.mup:
+                sdpa_scale = float(self.head_dim) ** -1.0
 
         if self.args.residual_value and (v1 is not None):
             v1 = v1.transpose(1,2) # B H T C -> B T H C again
@@ -682,7 +775,7 @@ class Attention(nn.Module):
             self.k_scaler.reset_parameters()
 
         # if self.args.residual_value:
-        #     ## for sanity check
+        #     ## for sanity check FSDP
         #     torch.nn.init.normal_(self.lambda_weight, mean=0.5, std=0.0)
 
 def adjust_hidden_dim(hidden_dim, ffn_dim_multiplier, multiple_of):
@@ -824,8 +917,18 @@ class FeedForward(nn.Module):
             self.fc2_norm = norm(self.d_model, eps=args.norm_eps)
 
         if self.args.ngpt:
-            self.u_scaler = Scaler(hidden_dim, scale=1.0)
-            self.v_scaler = Scaler(hidden_dim, scale=1.0)
+            self.u_scaler = Scaler(
+                hidden_dim, 
+                scale=1.0,
+                # scale=1/self.args.n_layers,
+                scale_init=1.0,
+            )
+            self.v_scaler = Scaler(
+                hidden_dim, 
+                scale=1.0,
+                # scale=1/self.args.n_layers,
+                scale_init=1.0,
+            )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
 
@@ -838,8 +941,8 @@ class FeedForward(nn.Module):
             x3 = self.w3(x.view_as(x))
 
             if self.args.ngpt:
+                x1 = self.v_scaler(x1, additional_scaler=self.d_model**0.5) # ngpt paper (21)
                 x3 = self.u_scaler(x3) # ngpt paper (20)
-                x1 = self.v_scaler(x1, additional_scaler = self.d_model ** 0.5) # ngpt paper (21)
 
             output = self.w2(F.silu(x1) * x3)
             if self.args.residual_post_norm:
@@ -959,8 +1062,16 @@ class TransformerBlock(nn.Module):
         )
 
         if self.args.ngpt:
-            self.attention_scaler = Scaler(d_model, scale=d_model**-0.5, scale_init=0.05)
-            self.ffn_scaler = Scaler(d_model, scale=d_model**-0.5)
+            self.attention_scaler = Scaler(
+                d_model, 
+                scale=d_model**-0.5, 
+                scale_init=0.05,
+            )
+            self.ffn_scaler = Scaler(
+                d_model, 
+                scale=d_model**-0.5,
+                scale_init=0.05,
+            )
         else:
             norm = FusedRMSNorm if self.args.fused_rms_norm else RMSNorm
             self.attention_norm = norm(d_model, eps=args.norm_eps)
@@ -974,6 +1085,7 @@ class TransformerBlock(nn.Module):
         mask: Optional[Union[BlockMask, AttentionBias, str]] = None,
         attn_impl: str = "sdpa",
         v1 = None,
+        layer_idx = None,
     ) -> torch.Tensor:
 
         if self.args.ngpt:
@@ -987,16 +1099,26 @@ class TransformerBlock(nn.Module):
             )
             if self.args.residual_value and isinstance(attn_out, Tuple):
                 attn_out, xv = attn_out
+
+            # my previous impl. 
+            # it already normalize output value, so next block's input will be normalized anyway
+            # however, it does not normalize token embedding of first residual block. that's difference
+            if layer_idx == 0:
+                # applying l2 norm after selfattn
+                x = l2_norm(x)
+
             x = l2_norm(
-                x + self.attention_scaler(l2_norm(attn_out) - x)  # ngpt paper (10), table 1
+                x + self.attention_scaler(l2_norm(attn_out) - x, use_abs_value=True)  # lerp, ngpt paper (10), table 1
             )
             ffn_out = self.feed_forward(x)
             x = l2_norm(
-                x + self.ffn_scaler(l2_norm(ffn_out) - x)  # ngpt paper (11), table 1
+                x + self.ffn_scaler(l2_norm(ffn_out) - x, use_abs_value=True)  # lerp, ngpt paper (11), table 1
             )
+
             if self.args.residual_value:
                 return (x, xv)
             return x
+        
         else:
             attn_out = self.attention(
                 self.attention_norm(x),
@@ -1070,7 +1192,7 @@ class BaseTransformer(nn.Module):
         freq_cis = self.rope_embeddings(seqlen=self.max_seqlen, tok_idx=tok_idx)
 
         for i, layer in enumerate(self.layers):
-            h = layer(h, freq_cis, tok_idx=tok_idx, mask=mask, attn_impl=attn_impl, v1=self.v1)
+            h = layer(h, freq_cis, tok_idx=tok_idx, mask=mask, attn_impl=attn_impl, v1=self.v1, layer_idx=i)
             if self.args.residual_value and isinstance(h, Tuple):
                 h, xv = h
                 if i == 0:

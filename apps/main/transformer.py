@@ -23,6 +23,7 @@ from lingua.transformer import (
     RMSNorm,
     cross_entropy,
     Scaler,
+    l2_norm,
 )
 from fused_kernels.fused_rms_norm import FusedRMSNorm
 from fused_kernels.fused_ce import fused_cross_entropy
@@ -96,12 +97,16 @@ class LMTransformer(BaseTransformer):
             self.output.weight = self.embeddings.tok_embeddings.weight
 
         if args.ngpt:
-            self.logit_scaler = Scaler(args.vocab_size, scale=d_model**-0.5)
+            self.logit_scaler = Scaler(
+                args.vocab_size, 
+                scale=d_model**-0.5,
+                scale_init=1.0,
+            )
         else:
             norm = FusedRMSNorm if self.args.fused_rms_norm else RMSNorm
             self.norm = norm(d_model, eps=args.norm_eps)
 
-        self.init_weights()
+        # self.init_weights()
 
     def forward(
         self,
@@ -113,10 +118,8 @@ class LMTransformer(BaseTransformer):
     ):
         bsz, seqlen = token_values.shape
 
-        scale_ = self.args.input_mult if self.args.mup else 1.0
-        h = self.tok_embeddings(token_values)
-        if scale_ != 1.0:
-            h = scale_*h
+        embedding_scale = self.args.input_mult if self.args.mup else 1.0
+        h = embedding_scale * self.tok_embeddings(token_values)
 
         mask = (
             mask
@@ -129,31 +132,27 @@ class LMTransformer(BaseTransformer):
         if self.args.mup:
             dim = self.args.dim or int(self.args.head_dim * self.args.n_heads)
             base_dim = self.args.base_dim or int(self.args.base_head_dim * self.args.base_n_heads)
-            scale_ = self.args.output_mult*(dim/base_dim)**-1.0
+            logit_scale = self.args.output_mult*(dim/base_dim)**-1.0
         else:
-            scale_ = 1.0
+            logit_scale = 1.0
 
         if self.args.fused_ce:
             # raise NotImplementedError("currently not supported because of Dtensor")
             assert target is not None, "fused ce need target because it does not materialize logit to save VRAM memory"
+            assert not self.args.ngpt, "fused ce does not materialize logit" 
             assert h.size(1) == target.size(1)
-            if not self.args.ngpt:
-                h = self.norm(h).float()
-            else:
-                raise NotImplementedError
-            h = scale_ * h
+            h = self.norm(h).float()
+            h = logit_scale * h
             h = h.contiguous().view(-1, h.size(-1))
             target = target.contiguous().view(-1)
-
             return fused_cross_entropy(h, self.output.weight, target)
 
         else:
             if not self.args.ngpt:
                 h = self.norm(h)
-            logits = self.output(scale_ * h).float()
+            logits = self.output(logit_scale * h).float()
             if self.args.ngpt:
                 logits = self.logit_scaler(logits)
-
             if target is not None:
                 return cross_entropy(logits, target)
             else:

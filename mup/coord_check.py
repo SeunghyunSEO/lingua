@@ -421,6 +421,9 @@ def _get_coord_data(models, dataloader, optcls, nsteps=3,
         torch.manual_seed(i)
         for width, model in models.items():
             model = model()
+            model.init_weights()
+            for n, p in model.named_parameters():
+                print(f'{n}: {p.mean()} {p.std()}')
             model = model.train()
             if cuda:
                 model = model.cuda()
@@ -688,6 +691,7 @@ def plot_coord_data(df, y='l1', save_to=None, suptitle=None, x='width', hue='mod
     hue_order = sorted(set(df['module']))
     if face_color is not None:
         fig.patch.set_facecolor(face_color)
+    Tra()
     ymin, ymax = min(df[y]), max(df[y])
     for t in ts:
         t = int(t)

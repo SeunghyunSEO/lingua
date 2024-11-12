@@ -160,8 +160,8 @@ def get_optimizer(model, args, model_args, dist_args, device_mesh):
             ),
             'use_decoupled_weight_decay': truly_decoupled_wd,
 
-            'max_preconditioner_dim': 1024,
-            'precondition_frequency': 1,
+            'max_preconditioner_dim': 8192,
+            'precondition_frequency': 20,
             'start_preconditioning_step': -1,
         }
 

@@ -205,7 +205,7 @@ class Scaler(nn.Module):
         # eigen_lr = self.weight.float() * (self.scale_init/self.scale) * additional_scaler
         eigen_lr = self.weight * (self.scale_init/self.scale) * additional_scaler
         if use_abs_value:
-            eigen_lr = torch.abs(eigen_lr) ## why?
+            eigen_lr = torch.abs(eigen_lr) ## following the paper, we can use negative value too
         # x = (x.float() * eigen_lr).type_as(x)
         x = (x * eigen_lr).type_as(x)
         return x

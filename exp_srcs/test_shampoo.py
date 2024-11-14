@@ -34,8 +34,8 @@ from utils import (
     print_message_with_master_process,
 )
 
-# USE_FSDP1=True
-USE_FSDP1=False
+USE_FSDP1=True
+# USE_FSDP1=False
 
 def test_shampoo():
     rank, world_rank, world_size, device = init_dist()
@@ -60,7 +60,13 @@ def test_shampoo():
     vocab_size = len(tokenizer)
     block_size = tokenizer.model_max_length
     hidden, nhead, nlayer = 1024, 8, 4
-    model = Transformer(vocab_size, block_size, hidden, nhead, nlayer).to(device)
+
+    # https://pytorch.org/docs/stable/meta.html
+    with torch.device("meta"):
+        model = Transformer(vocab_size, block_size, hidden, nhead, nlayer)
+    model = model.to_empty(device="cuda")
+
+    # model = Transformer(vocab_size, block_size, hidden, nhead, nlayer).to(device)
 
     if (not USE_FSDP1) or (USE_HSDP):
         from torch.distributed.device_mesh import init_device_mesh
@@ -85,6 +91,7 @@ def test_shampoo():
                 sharding_strategy=ShardingStrategy.HYBRID_SHARD
             )
         else:
+            #  If mesh is None, then FSDP2 initializes a 1D global mesh over the default process group.
             param_dtype, reduce_dtype = torch.bfloat16, torch.float32
             mp_policy = MixedPrecisionPolicy(param_dtype=param_dtype, reduce_dtype=reduce_dtype)
             fsdp_config = {"mesh": fsdp_mesh, "mp_policy": mp_policy}
@@ -97,6 +104,8 @@ def test_shampoo():
                     reshard_after_forward=reshard_after_forward,
                 )
             fully_shard(model, **fsdp_config, reshard_after_forward=True)
+
+    model.init_weights()
             
     print_message_with_master_process(rank, f'''
     model: {model}
@@ -137,6 +146,7 @@ def test_shampoo():
         grafting_config=AdamGraftingConfig(
             beta2=0.999,
             epsilon=1e-12,
+            # epsilon=1e-8,
         ),
         distributed_config=distributed_config,
     )

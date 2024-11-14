@@ -474,12 +474,14 @@ elif [ "$RUN_TYPE" = "slurm_run" ]; then
 fi
 
 ############################################################
-# export OPT_CLS_NAME='adamw'
-export OPT_CLS_NAME='shampoo'
+# # export OPT_CLS_NAME='adamw'
+# export WEIGHT_DECAY=0.1
+# export TRULY_DECOUPLED_WD=false
+# # export TRULY_DECOUPLED_WD=true
 
-export WEIGHT_DECAY=0.1
+export OPT_CLS_NAME='shampoo'
+export WEIGHT_DECAY=0.00001
 export TRULY_DECOUPLED_WD=false
-# export TRULY_DECOUPLED_WD=true
 
 ############################################################
 export QK_NORM=false
@@ -505,6 +507,12 @@ export RESIDUAL_VALUE=false
 # export RESIDUAL_VALUE=true
 
 ############################################################
+# export USE_MOE=true
+# export USE_DMOE=true
+export USE_MOE=false
+export USE_DMOE=false
+
+############################################################
 export PROBE_FREQ=100
 export PROBE_WANDB=true
 export PROFILING_RUN=false
@@ -512,6 +520,7 @@ export PROFILING_RUN=false
 ############################################################
 # LRS=(0.00391)
 LRS=(0.00195)
+# LRS=(0.00098)
 # LRS=(0.00098 0.00195 0.00781)
 # LRS=( # low resolution sweep / 2^-13 ~ 2^-4
 #         0.000061 0.000122 0.00024 0.00049
@@ -529,7 +538,7 @@ LRS=(0.00195)
 #         0.00049 0.00098 
 #         0.00195 0.00391
 # )
-# LRS=(0.00195 0.00391 0.00098 0.00049)
+# LRS=(0.00781 0.01562 0.03125 0.0625)
 # LRS=( # high resolution sweep / 2^-13 ~ 2^-4
 #         0.000061 0.000122 0.00024 0.00049
 #         0.00098 0.00138 0.00195 0.00276
@@ -537,19 +546,19 @@ LRS=(0.00195)
 #         0.01562 0.03125 0.0625
 # )
 
-## for test
-LRS=(0.00195)
-export WORLD_SIZE=2
-export MASTER_ADDR=node0
-export MASTER_PORT=23458
-export DP_DEGREE=2
-export DP_SHARD_DEGREE=1
-export TP_DEGREE=1
-export FSDP_TYPE=no_shard
-export BSZ=4
-export ACCUM=4
-export MUP=false
-export INIT_BASE_STD=0
+# ## for test
+# LRS=(0.00195)
+# export WORLD_SIZE=4
+# export MASTER_ADDR=node0
+# export MASTER_PORT=23458
+# export DP_DEGREE=4
+# export DP_SHARD_DEGREE=1
+# export TP_DEGREE=1
+# export FSDP_TYPE=no_shard
+# export BSZ=4
+# export ACCUM=2
+# export MUP=true
+# export INIT_BASE_STD=0.04419
 
 ############################################################
 export CONFIG=llama_8B_proxy
@@ -595,8 +604,10 @@ done
     - but i think it could be different in large scale pre-training because of stability and precision.
         - like weight decay contribution to better performance is due to stability improvement in modern llm regime
             - [Why Do We Need Weight Decay in Modern Deep Learning?](https://arxiv.org/abs/2310.04415)
+    - residual value works in 400M size /5B tokens scale (almost always better)
+    - nGPT is trained well but i think it shows high lr sensitivity and not superior performance compared to vanilla muP baselines
 
-![mup_sweep_241113_plot](assets/images/mup_sweep/mup_sweep_241113_plot.png)
+![mup_sweep_241114_plot](assets/images/mup_sweep/mup_sweep_241114_plot.png)
 
 - wider is always better with muP
 
@@ -604,6 +615,6 @@ done
 
 ![mup_wider_is_always_better_activation_l2_fig1](assets/images/lingua_sanity_check/mup_wider_is_always_better_activation_l2_fig1.png)
 
-- MFU looks good (but i didnt care small scale models's setup much)
+- MFU looks good in 1node (but i didnt care small scale models's setup much because i want to use same batch size for every widths)
 
 ![mup_wider_is_always_better_mfu_fig1](assets/images/lingua_sanity_check/mup_wider_is_always_better_mfu_fig1.png)

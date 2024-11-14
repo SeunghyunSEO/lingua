@@ -59,16 +59,27 @@ class Attention(nn.Module):
         x = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=True)
         x = x.transpose(1, 2).contiguous().view(B, T, -1)
         return self.o_proj(x)
+    
+    def reset_parameters(self):
+        nn.init.zeros_(self.q_proj.weight)
+        torch.nn.init.normal_(self.k_proj.weight, mean=0.0, std=self.hidden**-0.5)
+        torch.nn.init.normal_(self.v_proj.weight, mean=0.0, std=self.hidden**-0.5)
+        torch.nn.init.normal_(self.o_proj.weight, mean=0.0, std=self.hidden**-0.5)
 
 class MLP(nn.Module):
     def __init__(self, hidden, bias=False):
         super(MLP, self).__init__()
+        self.hidden = hidden
         self.ffn1 = nn.Linear(hidden, 4*hidden, bias)
         self.act = nn.GELU()
         self.ffn2 = nn.Linear(4*hidden, hidden, bias)
 
     def forward(self, x):
         return self.ffn2(self.act(self.ffn1(x)))
+    
+    def reset_parameters(self):
+        torch.nn.init.normal_(self.ffn1.weight, mean=0.0, std=self.hidden**-0.5)
+        torch.nn.init.normal_(self.ffn2.weight, mean=0.0, std=(4*self.hidden)**-0.5)
 
 class LayerNorm(nn.Module):
     def __init__(self, hidden, bias=False):
@@ -91,6 +102,12 @@ class LayerNorm(nn.Module):
             self.bias, 
             1e-5,
         )
+    
+    def reset_parameters(self):
+        ## for fsdp?
+        torch.nn.init.normal_(self.weight, mean=1.0, std=0.0)
+        if self.bias is not None:
+            nn.init.zeros_(self.bias)
 
 class ResidualBlock(nn.Module):
     def __init__(self, hidden, nhead, bias=False):
@@ -103,6 +120,12 @@ class ResidualBlock(nn.Module):
     def forward(self, x, freqs_cis):
         x = x + self.attn(self.ln1(x), freqs_cis)
         return x + self.mlp(self.ln2(x))
+    
+    def reset_parameters(self):
+        self.ln1.reset_parameters()
+        self.attn.reset_parameters()
+        self.ln2.reset_parameters()
+        self.mlp.reset_parameters()
 
 class Transformer(nn.Module):
     def __init__(self, vocab_size, block_size, hidden, nhead, nlayer, rope_theta=10000, bias=False):
@@ -144,3 +167,10 @@ class Transformer(nn.Module):
         x = self.lm_head(x).float() # projection to logit space and upcast, (B, T, C)
         if VERBOSE: print('after lm_head', x.size())
         return x
+
+    def init_weights(self):
+        torch.nn.init.normal_(self.model.wte.weight, mean=0.0, std=self.hidden**-0.5)
+        for block in self.model.h:
+            block.reset_parameters()
+        self.model.ln.reset_parameters()
+        nn.init.zeros_(self.lm_head.weight)

@@ -111,10 +111,10 @@ model:
   residual_value: ${oc.env:RESIDUAL_VALUE}
 
   ########################################
-  # use_moe: ${oc.env:USE_MOE}
-  # moe_dropless: ${oc.env:USE_DMOE}
-  # moe_num_experts: 8
-  # moe_top_k: 1
+  use_moe: ${oc.env:USE_MOE}
+  moe_dropless: ${oc.env:USE_DMOE}
+  moe_num_experts: 8
+  moe_top_k: 1
 
 ########################################
 optim:

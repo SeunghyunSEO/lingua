@@ -1325,10 +1325,14 @@ Successfully installed optimizers-1.0.0
 ```
 
 ```bash
-# cd /path/to/dir/lingua/exp_srcs
+## cd /path/to/dir/lingua/exp_srcs
 export WORLD_SIZE=4 &&\
 export MASTER_ADDR=node0 &&\
 export MASTER_PORT=23458
+
+# export DP=4 &&\
+# export SHARD=1 &&\
+# export TP=1
 
 # export DP=1 &&\
 # export SHARD=4 &&\
@@ -1423,31 +1427,6 @@ rank: 2, world_rank: 2, world size: 4, device: cuda:2
     USE_FSDP: True
     USE_FSDP1: False
     USE_HSDP: True
-
-    model: FSDPTransformer(
-  (model): ModuleDict(
-    (wte): Embedding(50257, 1024)
-    (h): ModuleList(
-      (0-3): 4 x FSDPResidualBlock(
-        (ln1): LayerNorm()
-        (attn): Attention(
-          (q_proj): Linear(in_features=1024, out_features=1024, bias=False)
-          (k_proj): Linear(in_features=1024, out_features=1024, bias=False)
-          (v_proj): Linear(in_features=1024, out_features=1024, bias=False)
-          (o_proj): Linear(in_features=1024, out_features=1024, bias=False)
-        )
-        (ln2): LayerNorm()
-        (mlp): MLP(
-          (ffn1): Linear(in_features=1024, out_features=4096, bias=False)
-          (act): GELU(approximate='none')
-          (ffn2): Linear(in_features=4096, out_features=1024, bias=False)
-        )
-      )
-    )
-    (ln): LayerNorm()
-  )
-  (lm_head): Linear(in_features=1024, out_features=50257, bias=False)
-)
     
 (10th step) loss: 0.0017692593391984701
 (20th step) loss: 0.000617060053627938
@@ -1462,6 +1441,140 @@ rank: 2, world_rank: 2, world size: 4, device: cuda:2
 ```
 
 </details>
+
+
+- with meta device init and proper init weight rules
+
+<details>
+
+- freq 20
+
+```
+    world_size: 4 
+    DP: 2 
+    SHARD: 2
+    USE_FSDP: True
+    USE_FSDP1: True
+    USE_HSDP: True
+
+(10th step) loss: 1.3546903133392334
+(20th step) loss: 1.0302302837371826
+(30th step) loss: 0.416164368391037
+(40th step) loss: 0.12017247080802917
+(50th step) loss: 0.01290307380259037
+(60th step) loss: 0.0057821981608867645
+(70th step) loss: 0.0025631480384618044
+(80th step) loss: 0.0016105674440041184
+(90th step) loss: 0.0012879527639597654
+(100th step) loss: 0.0011327103711664677
+```
+
+- adam graft eps 1e-12 -> 1e-8
+
+```
+(10th step) loss: 1.3545905351638794
+(20th step) loss: 1.0279392004013062
+(30th step) loss: 0.2081015706062317
+(40th step) loss: 0.08766886591911316
+(50th step) loss: 0.026547186076641083
+(60th step) loss: 0.009019976481795311
+(70th step) loss: 0.005379450507462025
+(80th step) loss: 0.003187002846971154
+(90th step) loss: 0.002673584036529064
+(100th step) loss: 0.0022112438455224037
+```
+
+- fsdp2 test
+
+```
+    world_size: 4 
+    DP: 4 
+    SHARD: 1
+    USE_FSDP: True
+    USE_FSDP1: False
+    USE_HSDP: False
+    
+(10th step) loss: 1.3542578220367432
+(20th step) loss: 0.866761326789856
+(30th step) loss: 0.35720300674438477
+(40th step) loss: 0.3435274362564087
+(50th step) loss: 0.11896494030952454
+(60th step) loss: 0.05341552197933197
+(70th step) loss: 0.01095607690513134
+(80th step) loss: 0.004343258682638407
+(90th step) loss: 0.0028793204110115767
+(100th step) loss: 0.002415182301774621
+```
+
+- if shard is >1 in fsdp2, there is a bug?
+
+```
+    world_size: 4 
+    DP: 1 
+    SHARD: 4
+    USE_FSDP: True
+    USE_FSDP1: False
+    USE_HSDP: False
+    
+(10th step) loss: 3.933840036392212
+(20th step) loss: 3.2685139179229736
+(30th step) loss: 2.593919515609741
+(40th step) loss: 2.378802537918091
+(50th step) loss: 2.36883544921875
+(60th step) loss: 2.3631842136383057
+(70th step) loss: 2.361143112182617
+(80th step) loss: 2.3605852127075195
+(90th step) loss: 2.3603568077087402
+(100th step) loss: 2.360239267349243
+```
+
+- for 2 gpus
+
+```
+    world_size: 2 
+    DP: 2 
+    SHARD: 1
+    USE_FSDP: True
+    USE_FSDP1: False
+    USE_HSDP: False
+
+(10th step) loss: 1.3505277633666992
+(20th step) loss: 0.8884690999984741
+(30th step) loss: 0.16790202260017395
+(40th step) loss: 0.04909110441803932
+(50th step) loss: 0.00142839050386101
+(60th step) loss: 0.0005323844379745424
+(70th step) loss: 0.00023802164650987834
+(80th step) loss: 0.0001529896690044552
+(90th step) loss: 0.00011920084216399118
+(100th step) loss: 0.00011330053530400619
+```
+
+```
+    world_size: 2 
+    DP: 1 
+    SHARD: 2
+    USE_FSDP: True
+    USE_FSDP1: False
+    USE_HSDP: False
+    
+(10th step) loss: 4.3625969886779785
+(20th step) loss: 4.552606582641602
+(30th step) loss: 2.8101553916931152
+(40th step) loss: 2.5426952838897705
+(50th step) loss: 2.537658929824829
+(60th step) loss: 2.5348167419433594
+(70th step) loss: 2.5337188243865967
+(80th step) loss: 2.53344988822937
+(90th step) loss: 2.5333364009857178
+(100th step) loss: 2.5332696437835693
+```
+
+</details>
+
+
+
+
 
 ## further things to followup
 

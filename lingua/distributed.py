@@ -428,10 +428,12 @@ def parallelize_model(
         param_dtype = dict(fp32=torch.float32, fp16=torch.float16, bf16=torch.bfloat16)[distributed_args.model_dtype]
         mp_policy = MixedPrecisionPolicy(param_dtype=param_dtype, reduce_dtype=torch.float32)
         mesh=(
-            device_mesh["dp_replicate", "dp_shard"]
+            device_mesh["dp_replicate", "dp_shard"] # 2d mesh with shard 1 == DDP i guess
             if distributed_args.dp_shard > 1
             or distributed_args.fsdp_type == "no_shard"
-            else device_mesh["dp_replicate"]
+            else device_mesh["dp_replicate"] # 1d mesh + reshard=True == zero-3 reshard=False == zero-2
+            # and 1D/2D mesh + reshard_after_forward=8 (int) == ZeRO++ hpZ
+            # If mesh is None, then FSDP2 initializes a 1D global mesh over the default process group.
         )
         fsdp_config = {"mesh": mesh, "mp_policy": mp_policy}
 

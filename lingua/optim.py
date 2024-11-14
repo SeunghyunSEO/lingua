@@ -34,6 +34,12 @@ class OptimArgs:
 
     opt_cls_name: str = "adamw"
 
+    # https://github.com/facebookresearch/optimizers/blob/ae4a81ee58569a43e1d4911eee7e4da1b143b1fa/distributed_shampoo/distributed_shampoo.py#L224-L278
+    shampoo_beta2: float = 0.999
+    shampoo_epsilon: float = 1e-12
+    shampoo_max_preconditioner_dim: int = 8192
+    shampoo_start_preconditioning_step: int = -1
+    shampoo_precondition_frequency: int = 20
 
 def lr_linear(step: int, warmup: int, n_steps: int, min_ratio: float) -> float:
     if step < warmup:
@@ -126,6 +132,11 @@ def get_optimizer(model, args, model_args, dist_args, device_mesh):
     # if truly_decoupled_wd:
     #     assert (args.weight_decay < 0.001), f"weight_decay value ({args.weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
 
+    ## tmp
+    if args.opt_cls_name.lower() == 'shampoo':
+        assert (args.weight_decay < 0.001), f"weight_decay value ({args.weight_decay}) is too large. set this as 1e-4 ~ 1e-5"
+        assert not truly_decoupled_wd, f"it means using adamw, not independent wd impl"
+    
     def new_group():
         new_g = {
             'lr': args.lr,
@@ -152,17 +163,17 @@ def get_optimizer(model, args, model_args, dist_args, device_mesh):
         }
     elif args.opt_cls_name.lower() == 'shampoo':
         opt_kwargs = {
-            'betas': (args.beta1, args.beta2),
-            'epsilon': args.epsilon,
+            'betas': (args.beta1, args.shampoo_beta2),
+            'epsilon': args.shampoo_epsilon,
             'grafting_config': AdamGraftingConfig(
-                beta2=args.beta2,
+                # beta2=args.beta2,
+                beta2=args.shampoo_beta2,
                 epsilon=args.epsilon,
             ),
-            'use_decoupled_weight_decay': truly_decoupled_wd,
-
-            'max_preconditioner_dim': 8192,
-            'precondition_frequency': 20,
-            'start_preconditioning_step': -1,
+            'use_decoupled_weight_decay': True,
+            'max_preconditioner_dim': args.shampoo_max_preconditioner_dim,
+            'start_preconditioning_step': args.shampoo_start_preconditioning_step,
+            'precondition_frequency': args.shampoo_precondition_frequency,
         }
 
         # ## for hsdp

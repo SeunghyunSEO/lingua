@@ -219,7 +219,7 @@ plot_coord_check(**args)
 
 ### nGPT (WIP)
 
-![SP_varying_nhead_gqa_True_basestd_None_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_False_residual_post_norm_False_ngpt_True_customized_adamw_wd_0.01_b1_0.9_b2_0.95_](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_True_basestd_None_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_False_residual_post_norm_False_ngpt_True_customized_adamw_wd_0.01_b1_0.9_b2_0.95_.png)
+![SP_varying_nhead_gqa_True_basestd_None_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_False_residual_post_norm_False_ngpt_True_customized_adamw_wd_0.01_b1_0.9_b2_0.95__](assets/images/mup_native_coord_check/SP_varying_nhead_gqa_True_basestd_None_inputmult_10.0_outputmult_1.0_lr_0.01_qk_norm_False_residual_post_norm_False_ngpt_True_customized_adamw_wd_0.01_b1_0.9_b2_0.95__.png)
 
 
 ## coord check using lingua app

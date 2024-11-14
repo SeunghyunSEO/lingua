@@ -340,12 +340,12 @@ done
 
 - firstly you can check initial std of all layers thanks to lingua's probing feature.
     - you can check if you implement mup well and it looks good. 
-    - vanilla fan-in varaiance for smalled proxy model, and `base_std/sqrt(width/base_width)` for wider models
+    - vanilla fan-in varaiance for smallest proxy model, and `base_std/sqrt(width/base_width)` for wider models
 
 ![mup_varying_nhead_weight_std_fig1](./assets/images/lingua_sanity_check/mup_varying_nhead_weight_std_fig1.png)
 
 - you can check activation l2 norm of all layers
-    - it seems not blown up according to width 
+    - it doesnt seem blown up according to incresaed width 
 
 ![mup_varying_nhead_activation_l2_fig1](./assets/images/lingua_sanity_check/mup_varying_nhead_activation_l2_fig1.png)
 *Fig. muP FFN module layers*
@@ -364,16 +364,16 @@ done
 ![_MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95](assets/images/mup_native_coord_check/MuP_varying_nhead_gqa_True_basestd_0.02_inputmult_10.0_outputmult_1.0_lr_0.01_customized_adamw_wd_0.01_b1_0.9_b2_0.95.png)
 *Fig. muP coordinate check*
 
-- now let's check SP 
-    - it looks like started from same fan-in variance std, but show different trajectory 
+- now let's check SP with lingua's probing tool
+    - both of them, SP and muP started from same fan-in variance std, but they show different trajectories
 
 ![sp_vs_mup_weight_std_fig1](assets/images/lingua_sanity_check/sp_vs_mup_weight_std_fig1.png)
 
-- and some layer's activation l2 norm starts to blow up
+- and some layer's activation l2 norm starts to blow up in SP
 
 ![sp_vs_mup_activation_l2_fig1](assets/images/lingua_sanity_check/sp_vs_mup_activation_l2_fig1.png)
 
-- attention logits looks bad too.
+- attention logits looks bad too (especially wider model).
 
 ![sp_vs_mup_attn_logits_fig1](assets/images/lingua_sanity_check/sp_vs_mup_attn_logits_fig1.png)
 
@@ -382,12 +382,12 @@ done
 
 ![mup_qknorm_attn_logits_fig1](assets/images/lingua_sanity_check/mup_qknorm_attn_logits_fig1.png)
 
-- and idk why gemma use residual post norm (`x = x + postnorm(ffn(prenorm(x)))`) clearly, but you can check l2 norm of final output of transformer residual blocks is very small compared to others (even qk_norm).
-    - i guess it can reduce [massive activation norms](https://arxiv.org/abs/2402.17762v1) and improve training stability a lot in large scale.
+- and for residual post norm (`x = x + postnorm(ffn(prenorm(x)))`), idk why gemma use residual post norm clearly, but you can check l2 norm of final output of transformer residual blocks is very small compared to others (even qk_norm).
+    - and i guess it can reduce [massive activation norms](https://arxiv.org/abs/2402.17762v1) so improve training stability a lot in large scale.
 
 ![mup_residual_post_norm_attention_residual_l2_fig1](assets/images/lingua_sanity_check/mup_residual_post_norm_attention_residual_l2_fig1.png)
 
-- (actviation value was fine in initialization but starts to blow up)
+- (actviation value was fine in initialization but starts to blow up without residual post norm)
 
 ![max_activation_value_growth](assets/images/lingua_sanity_check/max_activation_value_growth.png)
 

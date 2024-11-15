@@ -600,7 +600,7 @@ done
 
 ### observations (ongoing)
 
-- LR sweep (24. 11. 08 intermediate result)
+- LR sweep (24. 11. 15 intermediate result)
     - pls read the notes on plot
     - it seems residual post norm reduces lr sensitivity lil bit in smallest scale, but there is some performance degradation
     - but i think it could be different in large scale pre-training because of stability and precision.
@@ -613,7 +613,7 @@ done
 
 - for nGPT, warmup and weight decay set as 0.0
     - while baseline (muP) used 1k warmup and 0.1 wd
-- both of them, nGPT and muP baseline 40k adam update (nearly 5B tokens)
+- both of them, nGPT and muP baseline are trained with 40k adamw update (nearly 5B tokens)
 - i guess muP gaurantee maximal update for every layers theoretically, there are not huge gap or nGPT show better performance in large scale or when baseline use higher warmup steps
 
 ![lr_0.00195_baseline_vs_ngpt](assets/images/mup_sweep/lr_0.00195_baseline_vs_ngpt.png)
@@ -627,3 +627,89 @@ done
 - MFU looks good in 1node (but i didnt care small scale models's setup much because i want to use same batch size for every widths)
 
 ![mup_wider_is_always_better_mfu_fig1](assets/images/lingua_sanity_check/mup_wider_is_always_better_mfu_fig1.png)
+
+### shampoo vibe check
+
+- shampoo looks slightly better than adamw? in 0.00195 lr
+- MFU sucks with FSDP2
+
+![lr_0.00195_shampoo_vs_adamw](assets/images/lingua_sanity_check/lr_0.00195_shampoo_vs_adamw.png)
+
+![lr_0.00195_shampoo_vs_adamw_mfu](assets/images/lingua_sanity_check/lr_0.00195_shampoo_vs_adamw_mfu.png)
+
+- here's my code
+
+```python
+## arguments
+shampoo_beta2: float = 0.999
+shampoo_epsilon: float = 1e-12
+shampoo_max_preconditioner_dim: int = 8192
+shampoo_start_preconditioning_step: int = -1
+shampoo_precondition_frequency: int = 20
+
+def get_optimizer(model, args, model_args, dist_args, device_mesh):
+
+    from distributed_shampoo.distributed_shampoo import DistributedShampoo
+    from distributed_shampoo.shampoo_types import AdamGraftingConfig, FullyShardShampooConfig, HSDPShampooConfig
+    from distributed_shampoo.utils.shampoo_fsdp_utils import compile_fsdp_parameter_metadata
+    opt_cls = DistributedShampoo
+
+    def new_group():
+        new_g = {
+            'lr': args.lr,
+            'weight_decay': args.weight_decay,
+        }
+        new_g['params'] = []
+        return new_g
+    def new_group_():
+        new_g = {
+            'lr': args.lr,
+            'weight_decay': 0.,
+        }
+        new_g['params'] = []
+        return new_g
+
+    no_decay_name_list = ["bias", "norm", "scaler"]
+    optimizer_grouped_parameters = []
+
+    opt_kwargs = {
+        'betas': (args.beta1, args.shampoo_beta2),
+        'epsilon': args.shampoo_epsilon,
+        'grafting_config': AdamGraftingConfig(
+            # beta2=args.beta2,
+            beta2=args.shampoo_beta2,
+            epsilon=args.epsilon,
+        ),
+        'use_decoupled_weight_decay': True,
+        'max_preconditioner_dim': args.shampoo_max_preconditioner_dim,
+        'start_preconditioning_step': args.shampoo_start_preconditioning_step,
+        'precondition_frequency': args.shampoo_precondition_frequency,
+    }
+
+    ## for fully_shard (fsdp2)
+    opt_kwargs['distributed_config'] = FullyShardShampooConfig()
+
+    default_group = new_group()
+    no_decay_group = new_group_() # don't decay bias an layernorm
+
+    for n, p in model.named_parameters():
+        if p.requires_grad:
+            if any(ndnl in n for ndnl in no_decay_name_list):
+                # print(f'{n} is in {no_decay_name_list}, so wd is set as 0')
+                no_decay_group['params'].append(p)
+            else:
+                default_group['params'].append(p)
+
+    if truly_decoupled_wd:
+        default_group['weight_decay'] /= default_group['lr'] 
+
+    optimizer_grouped_parameters.extend(
+        [default_group] 
+        + [no_decay_group]
+    )
+
+    return opt_cls(
+        optimizer_grouped_parameters, 
+        **opt_kwargs,
+    )
+```

@@ -633,9 +633,9 @@ done
 - shampoo looks slightly better than adamw? in 0.00195 lr
 - MFU sucks with FSDP2
 
-![lr_0.00195_shampoo_vs_adamw](assets/images/lingua_sanity_check/lr_0.00195_shampoo_vs_adamw.png)
+![lr_0.00195_shampoo_vs_adamw](assets/images/mup_sweep/lr_0.00195_shampoo_vs_adamw.png)
 
-![lr_0.00195_shampoo_vs_adamw_mfu](assets/images/lingua_sanity_check/lr_0.00195_shampoo_vs_adamw_mfu.png)
+![lr_0.00195_shampoo_vs_adamw_mfu](assets/images/mup_sweep/lr_0.00195_shampoo_vs_adamw_mfu.png)
 
 - here's my code
 

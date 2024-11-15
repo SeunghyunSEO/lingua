@@ -630,6 +630,9 @@ done
 
 ### shampoo vibe check
 
+- model setup: 32 nlayers, 128 dhean, 4 nqhead, 1 nkvhead, rope, swiglu, llama3 vocab, muP init
+- bsz: 32 bsz, 4k seqlen = 131k tokens per iter
+- optimizer setup: warmup 1k, total update 40k, cosine lr schedule with `min_lr=0.1*peak_lr`
 - shampoo looks slightly better than adamw? in 0.00195 lr
 - MFU sucks with FSDP2
 

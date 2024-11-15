@@ -644,8 +644,13 @@ done
 
 ```python
 ## arguments
+weight_decay: float = 1e-5 # shampoo and torch default scale is very different because torch default adamw's wd is multiplied by current lr 
+epsilon: float = 1e-8 # 
+beta1: float = 0.9 # 1st moment
+beta2: float = 0.95 # 2nd moment (used for adagrad grafting) 
+
 shampoo_beta2: float = 0.999
-shampoo_epsilon: float = 1e-12
+shampoo_epsilon: float = 1e-12 
 shampoo_max_preconditioner_dim: int = 8192
 shampoo_start_preconditioning_step: int = -1
 shampoo_precondition_frequency: int = 20
@@ -680,7 +685,7 @@ def get_optimizer(model, args, model_args, dist_args, device_mesh):
         'epsilon': args.shampoo_epsilon,
         'grafting_config': AdamGraftingConfig(
             # beta2=args.beta2,
-            beta2=args.shampoo_beta2,
+            beta2=args.shampoo_beta2, # currently use same beta2 with shampoo
             epsilon=args.epsilon,
         ),
         'use_decoupled_weight_decay': True,

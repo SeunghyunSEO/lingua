@@ -25,6 +25,8 @@
 - [ ] enabling [disttributed shampoo](https://arxiv.org/abs/2309.06497) in trainer
     - [x] with fsdp
         - but it does not work in lingua app (...?)
+            - resolved by removing `init_weights` in model's init method
+    - [ ] improving MFU
 
 ## additional TODO
 
@@ -608,6 +610,13 @@ done
     - nGPT is trained well but i think it shows high lr sensitivity and not superior performance compared to vanilla muP baselines
 
 ![mup_sweep_241114_plot](assets/images/mup_sweep/mup_sweep_241114_plot.png)
+
+- for nGPT, warmup and weight decay set as 0.0
+    - while baseline (muP) used 1k warmup and 0.1 wd
+- both of them, nGPT and muP baseline 40k adam update (nearly 5B tokens)
+- i guess muP gaurantee maximal update for every layers theoretically, there are not huge gap or nGPT show better performance in large scale or when baseline use higher warmup steps
+
+![lr_0.00195_baseline_vs_ngpt](assets/images/mup_sweep/lr_0.00195_baseline_vs_ngpt.png)
 
 - wider is always better with muP
 

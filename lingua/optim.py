@@ -195,7 +195,6 @@ def get_optimizer(model, args, model_args, dist_args, device_mesh):
             from matrix_functions_types import QREigenvalueCorrectionConfig
             opt_kwargs['preconditioner_computation_config'] = QREigenvalueCorrectionConfig()
             opt_kwargs['grafting_config'] = None
-            opt_kwargs['precondition_frequency'] = 1 ## force 1 
 
     else:
         raise NotImplementedError

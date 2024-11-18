@@ -450,6 +450,12 @@ if [ "$RUN_TYPE" = "local_run" ]; then
         export DP_SHARD_DEGREE=1
         export TP_DEGREE=1
         export FSDP_TYPE=no_shard
+
+        # export DP_DEGREE=1
+        # export DP_SHARD_DEGREE=8
+        # export TP_DEGREE=1
+        # export FSDP_TYPE=full_shard
+
     elif [ "$N_HEADS" -eq 8 ] || [ "$N_HEADS" -eq 16 ]; then
         export DP_DEGREE=2
         export DP_SHARD_DEGREE=4

@@ -39,7 +39,8 @@ class OptimArgs:
     shampoo_epsilon: float = 1e-12
     shampoo_max_preconditioner_dim: int = 8192
     shampoo_start_preconditioning_step: int = -1
-    shampoo_precondition_frequency: int = 20
+    shampoo_precondition_frequency: int = 10
+    use_soap: bool = False
 
 def lr_linear(step: int, warmup: int, n_steps: int, min_ratio: float) -> float:
     if step < warmup:
@@ -184,6 +185,17 @@ def get_optimizer(model, args, model_args, dist_args, device_mesh):
 
         ## for fully_shard (fsdp2)
         opt_kwargs['distributed_config'] = FullyShardShampooConfig()
+
+        if args.use_soap:
+            '''
+            https://arxiv.org/abs/2409.11321
+            https://github.com/facebookresearch/optimizers/pull/44
+            https://github.com/facebookresearch/optimizers/issues/50#issuecomment-2478704643
+            '''
+            from matrix_functions_types import QREigenvalueCorrectionConfig
+            opt_kwargs['preconditioner_computation_config'] = QREigenvalueCorrectionConfig()
+            opt_kwargs['grafting_config'] = None
+            opt_kwargs['precondition_frequency'] = 1 ## force 1 
 
     else:
         raise NotImplementedError

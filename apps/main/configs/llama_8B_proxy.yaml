@@ -119,6 +119,8 @@ model:
 ########################################
 optim:
   opt_cls_name: ${oc.env:OPT_CLS_NAME}
+  # use_soap: false
+  use_soap: true
 
   lr: ${oc.env:LR}
   lr_min_ratio: 0.1

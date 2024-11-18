@@ -64,7 +64,6 @@ class DistributedArgs:
     loss_parallel: bool = False
     enable_async_tp: bool = False
 
-    ## TODO
     pp_size: int = 1
 
     selective_activation_checkpointing: bool = False
@@ -106,11 +105,14 @@ def get_device_mesh(distributed_args: DistributedArgs):
     pp_size = distributed_args.pp_size
 
     assert (
-        dp_replicate * dp_shard * tp_size == get_world_size()
-    ), f"dp_replicate * dp_shard * tp_size ({dp_replicate} * {dp_shard} * {tp_size}) != world_size ({get_world_size()})"
+        dp_replicate * dp_shard * tp_size * pp_size == get_world_size()
+    ), f"dp_replicate * dp_shard * tp_size ({dp_replicate} * {dp_shard} * {tp_size} * {pp_size}) != world_size ({get_world_size()})"
 
     dims = []
     names = []
+    if pp_size > 1:
+        dims.append(pp_size)
+        names.append("pp")
     if dp_replicate >= 1:
         dims.append(dp_replicate)
         names.append("dp_replicate")
@@ -121,11 +123,6 @@ def get_device_mesh(distributed_args: DistributedArgs):
         dims.append(tp_size)
         names.append("tp")
 
-    ## TODO
-    if pp_size > 1:
-        dims.append(pp_size)
-        names.append("pp")
-        
     dims = tuple(dims)
     names = tuple(names)
 
@@ -412,117 +409,96 @@ def parallelize_model(
     no_recompute_ops=None,
     use_shampoo=False,
 ):
-    if use_shampoo:
-        ## idk why fsdp2 does not converge..?
-        assert distributed_args.tp_size == 1, "currently shampoo does not support TP"
-        
-        # from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-        # from torch.distributed.fsdp import ShardingStrategy
-        # model = FSDP(
-        #     model, 
-        #     device_mesh=device_mesh, 
-        #     use_orig_params=True,
-        #     sharding_strategy=ShardingStrategy.HYBRID_SHARD
-        # )
+    # if use_shampoo:
+    #     ## idk why fsdp2 does not converge..?
+    #     # from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+    #     # from torch.distributed.fsdp import ShardingStrategy
+    #     # model = FSDP(
+    #     #     model, 
+    #     #     device_mesh=device_mesh, 
+    #     #     use_orig_params=True,
+    #     #     sharding_strategy=ShardingStrategy.HYBRID_SHARD
+    #     # )
+
+    ## FSDP 2, https://github.com/pytorch/torchtitan/blob/main/docs/fsdp.md
+    if distributed_args.tp_size > 1:
+        assert (
+            distributed_args.fsdp_type == "full_shard"
+        ), "Only full shard is supported for TP parallelism"
+        assert tp_parallelize is not None, "TP plan is required for TP parallelism"
+        assert (
+            distributed_args.compile == False
+        ), "Compile is not supported for TP parallelism"
+        tp_parallelize(model, device_mesh["tp"], model_args, distributed_args)
+
+    if distributed_args.float8_recipe is not None:
+        if distributed_args.tp_size > 1:
+            raise RuntimeError("float8 is incompatible with tensor-parallelism for now")
+        model = convert_linears_to_fp8(
+            model, distributed_args.float8_recipe, distributed_args.float8_filter
+        )
+
+    if (
+        distributed_args.fsdp_type == "full_shard"
+        or distributed_args.fsdp_type == "no_shard"
+    ):
+        if distributed_args.fsdp_type == "no_shard":
+            assert (
+                distributed_args.dp_shard == 1
+            ), "dp_shard must be 1 for no_shard fsdp_type"
+            assert (
+                device_mesh["dp_shard"].size() == 1
+            ), "dp_shard must be 1 for no_shard fsdp_type"
 
         param_dtype = dict(fp32=torch.float32, fp16=torch.float16, bf16=torch.bfloat16)[distributed_args.model_dtype]
-        mp_policy = MixedPrecisionPolicy(param_dtype=param_dtype, reduce_dtype=torch.float32)
-        mesh=(
-            device_mesh["dp_replicate", "dp_shard"] # 2d mesh with shard 1 == DDP i guess
-            if distributed_args.dp_shard > 1
-            or distributed_args.fsdp_type == "no_shard"
-            else device_mesh["dp_replicate"] # 1d mesh + reshard=True == zero-3 reshard=False == zero-2
-            # and 1D/2D mesh + reshard_after_forward=8 (int) == ZeRO++ hpZ
-            # If mesh is None, then FSDP2 initializes a 1D global mesh over the default process group.
+        reduce_dtype = torch.float32
+        # reduce_dtype = torch.float32 if distributed_args.pp_size == 1 else param_dtype
+        mp_policy = MixedPrecisionPolicy(param_dtype=param_dtype, reduce_dtype=reduce_dtype)
+        fsdp_config = dict(
+            mp_policy=mp_policy,
+            mesh=(
+                device_mesh["dp_replicate", "dp_shard"]
+                if distributed_args.dp_shard > 1
+                or distributed_args.fsdp_type == "no_shard"
+                else device_mesh["dp_replicate"]
+            ),
         )
-        fsdp_config = {"mesh": mesh, "mp_policy": mp_policy}
 
-        ## FSDP2 ver 1
-        ## there was a parameter not flattend bug, because model.init_wegihts() is done before fsdp maybe
-        if fsdp_grouping_plan is None:
-            # Assume that the model has list of layers and group around it
-            fsdp_grouping_plan = default_fsdp_grouping_plan(len(model.layers))
+        # if fsdp_grouping_plan is None:
+        #     # Assume that the model has list of layers and group around it
+        #     fsdp_grouping_plan = default_fsdp_grouping_plan(len(model.layers))
+        # for path, reshard_after_forward in fsdp_grouping_plan:
+        #     module = get_module(model, path)
+        #     set_module(
+        #         model,
+        #         path,
+        #         fully_shard(
+        #             module, 
+        #             **fsdp_config, 
+        #             reshard_after_forward=reshard_after_forward
+        #         ),
+        #     )
+        # model = fully_shard(model, **fsdp_config, reshard_after_forward=True)
 
-        for path, reshard_after_forward in fsdp_grouping_plan:
-            module = get_module(model, path)
-            set_module(
-                model,
-                path,
-                fully_shard(
-                    module, **fsdp_config, reshard_after_forward=reshard_after_forward
-                ),
+        ## follow torchtitan convention due to moduledict not list
+        pp_enabled = distributed_args.pp_size > 1
+        for layer_id, transformer_block in model.layers.items():
+            if pp_enabled:
+                # For PP, do not reshard after forward to avoid per-microbatch
+                # all-gathers, which can be expensive and non-overlapped
+                reshard_after_forward = False
+            else:
+                # As an optimization, do not reshard after forward for the last
+                # transformer block since FSDP would prefetch it immediately
+                reshard_after_forward = int(layer_id) < len(model.layers) - 1
+            fully_shard(
+                transformer_block,
+                **fsdp_config,
+                reshard_after_forward=reshard_after_forward,
             )
-        model = fully_shard(model, **fsdp_config, reshard_after_forward=True)
-
+        fully_shard(model, **fsdp_config, reshard_after_forward=not pp_enabled)
     else:
-        ## FSDP 2, https://github.com/pytorch/torchtitan/blob/main/docs/fsdp.md
-        if distributed_args.tp_size > 1:
-            assert (
-                distributed_args.fsdp_type == "full_shard"
-            ), "Only full shard is supported for TP parallelism"
-            assert tp_parallelize is not None, "TP plan is required for TP parallelism"
-            assert (
-                distributed_args.compile == False
-            ), "Compile is not supported for TP parallelism"
-            
-            tp_parallelize(model, device_mesh["tp"], model_args, distributed_args)
-
-        if distributed_args.float8_recipe is not None:
-            if distributed_args.tp_size > 1:
-                raise RuntimeError("float8 is incompatible with tensor-parallelism for now")
-            model = convert_linears_to_fp8(
-                model, distributed_args.float8_recipe, distributed_args.float8_filter
-            )
-
-        param_dtype = dict(fp32=torch.float32, fp16=torch.float16, bf16=torch.bfloat16)[
-            distributed_args.model_dtype
-        ]
-        if (
-            distributed_args.fsdp_type == "full_shard"
-            or distributed_args.fsdp_type == "no_shard"
-        ):
-            if distributed_args.fsdp_type == "no_shard":
-                assert (
-                    distributed_args.dp_shard == 1
-                ), "dp_shard must be 1 for no_shard fsdp_type"
-                assert (
-                    device_mesh["dp_shard"].size() == 1
-                ), "dp_shard must be 1 for no_shard fsdp_type"
-
-            fsdp_config = dict(
-                # https://github.com/pytorch/torchtitan/blob/main/docs/fsdp.md
-                mp_policy=(
-                    MixedPrecisionPolicy(
-                        param_dtype=param_dtype,
-                        reduce_dtype=torch.float32,
-                    )
-                ),
-                # https://github.com/facebookresearch/lingua/blob/31ab231b2d386c4c735e82e8a2c40f10ce13fbbc/apps/main/train.py#L171
-                mesh=(
-                    device_mesh["dp_replicate", "dp_shard"]
-                    if distributed_args.dp_shard > 1
-                    or distributed_args.fsdp_type == "no_shard"
-                    else device_mesh["dp_replicate"]
-                ),
-            )
-
-            if fsdp_grouping_plan is None:
-                # Assume that the model has list of layers and group around it
-                fsdp_grouping_plan = default_fsdp_grouping_plan(len(model.layers))
-
-            for path, reshard_after_forward in fsdp_grouping_plan:
-                module = get_module(model, path)
-                set_module(
-                    model,
-                    path,
-                    fully_shard(
-                        module, **fsdp_config, reshard_after_forward=reshard_after_forward
-                    ),
-                )
-
-            model = fully_shard(model, **fsdp_config, reshard_after_forward=True)
-        else:
-            raise ValueError(f"Invalid fsdp_type: {distributed_args.fsdp_type}")
+        raise ValueError(f"Invalid fsdp_type: {distributed_args.fsdp_type}")
 
     if distributed_args.selective_activation_checkpointing:
         model = checkpoint_wrapper(
@@ -562,249 +538,3 @@ def parallelize_model(
         # logger.info("Compiling each TransformerBlock with torch.compile")
 
     return model
-
-
-# ################################################################################
-# ################################################################################
-# ################################################################################
-# '''
-# https://pytorch.org/docs/main/distributed.pipelining.html
-# https://pytorch.org/tutorials/intermediate/pipelining_tutorial.html
-
-# https://github.com/pytorch/torchtitan/blob/main/torchtitan/parallelisms/pipeline_llama.py
-# https://github.com/pytorch/torchtitan/blob/main/torchtitan/parallelisms/pipelining_utils.py
-
-# https://github.com/pytorch/torchtitan/blob/3247841423429faf37bdf6918204350db293e482/train.py#L153
-# https://github.com/pytorch/torchtitan/blob/3247841423429faf37bdf6918204350db293e482/train.py#L287
-
-# '''
-
-# import copy
-# from typing import Callable, Union, Tuple
-
-# import torch
-# import torch.nn as nn
-# from torch.distributed import DeviceMesh
-# from torch.distributed.pipelining import PipelineStage
-# from torch.distributed.pipelining.schedules import (
-#     get_schedule_class,
-#     PipelineScheduleMulti,
-#     PipelineScheduleSingle,
-# )
-
-
-# DeviceType = Union[int, str, torch.device]
-
-
-# def pipeline_model(
-#     model,
-#     device_mesh,
-#     model_args,
-#     distributed_args: DistributedArgs,
-#     device,
-#     loss_fn,
-# ):
-#     pp_mesh = device_mesh['pp']
-#     pipeline_parallel_microbatches = None
-#     pipeline_parallel_split_points = None
-#     pipeline_parallel_schedule = None
-#     pipeline_parallel_degree = None
-
-#     stages, models = pipeline_model_manual_split(
-#         model, 
-#         pp_mesh, 
-#         parallel_dims, 
-#         pipeline_parallel_microbatches,
-#         pipeline_parallel_split_points,
-#         pipeline_parallel_schedule, 
-#         device, 
-#         model_args,
-#     )
-
-#     pp_schedule = build_pipeline_schedule(
-#         pipeline_parallel_schedule, 
-#         pipeline_parallel_microbatches, 
-#         pipeline_parallel_degree, 
-#         stages, 
-#         loss_fn
-#     )
-
-#     return pp_schedule, models
-
-
-# def pipeline_model_manual_split(
-#     whole_model: nn.Module,
-#     pp_mesh,
-#     parallel_dims,
-    
-#     pipeline_parallel_microbatches,
-#     pipeline_parallel_split_points,
-#     pipeline_parallel_schedule,
-
-#     device: DeviceType,
-#     model_config: ModelArgs,
-# ):
-#     """
-#     This API extracts one torch.nn.Module objects for the part of the model configured to run inside this stage.
-
-#     It wraps the model chunk in a ManualPipelineStage object and returns both the stage and model objects.
-
-#     The stage object is used to create a pipeline schedule, and the model object can be used for applying SPMD
-#     parallelism.
-#     """
-#     pp_rank = pp_mesh.get_local_rank()
-#     pp_size = pp_mesh.size()
-#     microbatches = (
-#         pipeline_parallel_microbatches or parallel_dims.pp
-#     )
-#     splits = (
-#         pipeline_parallel_split_points
-#         or generate_split_points(
-#             pipeline_parallel_schedule, 
-#             parallel_dims.pp, 
-#             model_config
-#         )
-#     )
-
-#     def _build_stage(stage_idx, start_layer, stop_layer, is_first=False, is_last=False):
-#         model = copy.deepcopy(whole_model)
-#         if not is_first:
-#             model.tok_embeddings = None
-
-#         drop_layers = start_layer is not None
-#         for name in list(model.layers.keys()):
-#             # we keep layers in a contiguous region between start (inclusive) and stop (exclusive)
-#             if f"layers.{name}" == start_layer:
-#                 drop_layers = False
-#             if f"layers.{name}" == stop_layer:
-#                 drop_layers = True
-#             if drop_layers:
-#                 del model.layers[name]
-
-#         if not is_last:
-#             model.norm = None
-#             model.output = None
-
-#         stage = PipelineStage(
-#             model,
-#             stage_idx,
-#             num_stages,
-#             device,
-#             group=pp_mesh.get_group("pp"),
-#         )
-#         return stage, model
-
-#     num_stages = len(splits) + 1
-#     stage_idx = pp_rank
-
-#     stages = []
-#     models = []
-#     for stage_idx in stage_ids_this_rank(pp_rank, pp_size, num_stages, style="loop"):
-#         start_layer = splits[stage_idx - 1] if stage_idx > 0 else None
-#         stop_layer = splits[stage_idx] if stage_idx < num_stages - 1 else None
-#         stage, model_chunk = _build_stage(
-#             stage_idx,
-#             start_layer,
-#             stop_layer,
-#             is_first=stage_idx == 0,
-#             is_last=stage_idx == num_stages - 1,
-#         )
-#         logger.info(
-#             f"PP rank {pp_rank} is building stage_idx {stage_idx}"
-#             f" with start_layer {start_layer}, stop_layer {stop_layer}: model chunk \n{model_chunk}"
-#         )
-#         stages.append(stage)
-#         models.append(model_chunk)
-#     return stages, models
-
-# def generate_split_points(pipeline_parallel_schedule, pp_dim, model_config):
-#     schedule_class = get_schedule_class(
-#         pipeline_parallel_schedule
-#     )
-#     if issubclass(schedule_class, PipelineScheduleSingle):
-#         num_stages_per_rank = 1
-#     elif issubclass(schedule_class, PipelineScheduleMulti):
-#         # Multi-stage schedules support more than 2 stages per rank, but this is the default if
-#         # no pipeline split is specified
-#         num_stages_per_rank = 2
-#     else:
-#         raise ValueError(
-#             f"Unsupported pipeline schedule: {pipeline_parallel_schedule}"
-#         )
-#     total_stages = pp_dim * num_stages_per_rank
-#     num_layers = model_config.n_layers
-#     if total_stages > num_layers:
-#         raise ValueError("Total stages cannot be greater than the number of layers")
-
-#     base_interval = num_layers // total_stages
-#     extra_layers = num_layers % total_stages
-
-#     splits = []
-#     current_layer = 0
-#     for i in range(total_stages - 1):
-#         if i == 0:
-#             current_layer += base_interval
-#         else:
-#             # Middle stages get an extra layer if there are any remaining
-#             if extra_layers > 0:
-#                 current_layer += base_interval + 1
-#                 extra_layers -= 1
-#             else:
-#                 current_layer += base_interval
-#         splits.append("layers." + str(current_layer))
-#     logger.info(
-#         f"No 'pipeline_parallel_split_points' so the generated splits are: {splits} \
-# This may be sub-optimal as the number of layers per stage may be unbalanced."
-#     )
-#     return splits
-
-
-# def build_pipeline_schedule(
-#     pipeline_parallel_schedule, 
-#     pipeline_parallel_microbatches, 
-#     pipeline_parallel_degree, 
-#     stages, 
-#     loss_fn
-# ):
-#     schedule_class = get_schedule_class(
-#         pipeline_parallel_schedule
-#     )
-#     if schedule_class in [PipelineScheduleSingle, PipelineScheduleMulti]:
-#         raise ValueError(
-#             f"{schedule_class} is not supported as we do not support custom CSV schedules."
-#         )
-
-#     looped_schedule = issubclass(schedule_class, PipelineScheduleMulti)
-#     logger.info(
-#         f"Using pipeline schedule {pipeline_parallel_schedule}"
-#     )
-#     n_microbatches = pipeline_parallel_microbatches
-#     if n_microbatches is None:
-#         n_microbatches = pipeline_parallel_degree
-
-#     return schedule_class(
-#         stages if looped_schedule else stages[0],
-#         n_microbatches=n_microbatches,
-#         loss_fn=loss_fn,
-#     )
-
-
-# # TODO(whc) should this be a utility inside torch.pipelining?
-# def stage_ids_this_rank(
-#     pp_rank: int, pp_size: int, num_stages: int, style: str = "loop"
-# ) -> Tuple[int]:
-#     """Compute the stage ids for the stages that will run on this pp rank for either a looped or V style schedule"""
-#     assert (
-#         num_stages % pp_size == 0
-#     ), f"num_stages {num_stages} must be evenly divisible by pp_size {pp_size}"
-#     stages_per_rank = num_stages // pp_size
-#     if style == "loop":
-#         return tuple(pp_rank + s * pp_size for s in range(stages_per_rank))
-#     elif style == "v":
-#         assert (
-#             stages_per_rank == 2
-#         ), f"v schedules assume 2 stages per rank, got {stages_per_rank}"
-#         stage_v_pairs = list(
-#             zip(range(pp_size), range(num_stages - 1, pp_size - 1, -1))
-#         )
-#         return stage_v_pairs[pp_rank]

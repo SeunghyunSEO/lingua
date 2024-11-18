@@ -27,6 +27,14 @@
         - but it does not work in lingua app (...?)
             - resolved by removing `init_weights` in model's init method
     - [ ] improving MFU
+- [ ] PP
+    - [ ] test with TP (3D parallel)
+
+```
+# for PP, youd better update torch 2.6 nightly
+pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu121
+pip install -v -U git+https://github.com/facebookresearch/xformers.git@main#egg=xformers
+```
 
 ## additional TODO
 
@@ -231,15 +239,16 @@ plot_coord_check(**args)
 <details>
 
 ```bash
-# 1gpu test
-export WORLD_SIZE=1
-export MASTER_ADDR=node0
-export MASTER_PORT=23458
-export DP_DEGREE=1
-export DP_SHARD_DEGREE=1
-export TP_DEGREE=1
-export FSDP_TYPE=no_shard
-export COMPILE=true
+# # 1gpu test
+# export WORLD_SIZE=1
+# export MASTER_ADDR=node0
+# export MASTER_PORT=23458
+# export DP_DEGREE=1
+# export DP_SHARD_DEGREE=1
+# export TP_DEGREE=1
+# export PP_DEGREE=1
+# export FSDP_TYPE=no_shard
+# export COMPILE=true
 
 # ## 2gpu fsdp test
 # export WORLD_SIZE=2
@@ -248,8 +257,22 @@ export COMPILE=true
 # export DP_DEGREE=1
 # export DP_SHARD_DEGREE=2
 # export TP_DEGREE=1
+# export PP_DEGREE=1
 # export FSDP_TYPE=full_shard
 # export COMPILE=true
+
+## TP and PP test
+export WORLD_SIZE=4
+export MASTER_ADDR=node0
+export MASTER_PORT=23458
+export DP_DEGREE=1
+export DP_SHARD_DEGREE=1
+export TP_DEGREE=1
+export PP_DEGREE=4
+# export TP_DEGREE=2
+# export PP_DEGREE=2
+export FSDP_TYPE=full_shard
+export COMPILE=false
 
 # export MUP=false
 # export INIT_BASE_STD=0
@@ -266,8 +289,8 @@ export BASE_N_KV_HEADS=4
 export N_HEADS_=(4)
 # export N_HEADS_=(4 8 16)
 
-# export OPT_CLS_NAME="adamw"
-export OPT_CLS_NAME="shampoo"
+export OPT_CLS_NAME="adamw"
+# export OPT_CLS_NAME="shampoo"
 
 export LR=0.01
 export WEIGHT_DECAY=0.0
@@ -449,32 +472,24 @@ if [ "$RUN_TYPE" = "local_run" ]; then
         export DP_DEGREE=8
         export DP_SHARD_DEGREE=1
         export TP_DEGREE=1
+        export PP_DEGREE=1
         export FSDP_TYPE=no_shard
-
-        # export DP_DEGREE=1
-        # export DP_SHARD_DEGREE=8
-        # export TP_DEGREE=1
-        # export FSDP_TYPE=full_shard
-
     elif [ "$N_HEADS" -eq 8 ] || [ "$N_HEADS" -eq 16 ]; then
         export DP_DEGREE=2
         export DP_SHARD_DEGREE=4
         export TP_DEGREE=1
+        export PP_DEGREE=1
         export FSDP_TYPE=full_shard
     elif [ "$N_HEADS" -eq 32 ]; then
         export DP_DEGREE=1
         export DP_SHARD_DEGREE=8
         export TP_DEGREE=1
+        export PP_DEGREE=1
         export FSDP_TYPE=full_shard
     fi
 
     export COMPILE=true
     # export COMPILE=false
-
-    # ## for TP sanity check
-    # export DP_DEGREE=4
-    # export DP_SHARD_DEGREE=1
-    # export TP_DEGREE=2
 
 elif [ "$RUN_TYPE" = "slurm_run" ]; then
     ## slurn run 
@@ -562,6 +577,7 @@ LRS=(0.00195)
 # export DP_DEGREE=4
 # export DP_SHARD_DEGREE=1
 # export TP_DEGREE=1
+# export PP_DEGREE=1
 # export FSDP_TYPE=no_shard
 # export BSZ=4
 # export ACCUM=2

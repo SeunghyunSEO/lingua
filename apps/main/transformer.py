@@ -106,8 +106,6 @@ class LMTransformer(BaseTransformer):
             norm = FusedRMSNorm if self.args.fused_rms_norm else RMSNorm
             self.norm = norm(d_model, eps=args.norm_eps)
 
-        # self.init_weights()
-
     def forward(
         self,
         token_values: torch.Tensor,
@@ -116,10 +114,15 @@ class LMTransformer(BaseTransformer):
         mask: Optional[Union[BlockMask, AttentionBias, torch.Tensor, str]] = None,
         attn_impl: str = "sdpa",
     ):
-        bsz, seqlen = token_values.shape
 
-        embedding_scale = self.args.input_mult if self.args.mup else 1.0
-        h = embedding_scale * self.tok_embeddings(token_values)
+        if self.tok_embeddings:
+            embedding_scale = self.args.input_mult if self.args.mup else 1.0
+            h = embedding_scale * self.tok_embeddings(token_values)
+        else:
+            # passthrough for nonexistent layers, allows easy configuration of pipeline parallel stages
+            h = token_values
+        _, seqlen, _ = h.shape
+        
 
         mask = (
             mask
@@ -148,11 +151,15 @@ class LMTransformer(BaseTransformer):
             return fused_cross_entropy(h, self.output.weight, target)
 
         else:
-            if not self.args.ngpt:
-                h = self.norm(h)
-            logits = self.output(logit_scale * h).float()
-            if self.args.ngpt:
-                logits = self.logit_scaler(logits)
+            if self.norm is not None:
+                if not self.args.ngpt:
+                    h = self.norm(h)
+            if self.output is not None:
+                logits = self.output(logit_scale * h).float()
+                if self.args.ngpt:
+                    logits = self.logit_scaler(logits)
+            else:
+                return h
             if target is not None:
                 return cross_entropy(logits, target)
             else:
@@ -164,32 +171,21 @@ class LMTransformer(BaseTransformer):
         if self.args.ngpt:
             self.logit_scaler.reset_parameters()
         else:
-            self.norm.reset_parameters()
+            if self.norm is not None:
+                self.norm.reset_parameters()
 
         if self.args.mup:
             assert init_std is not None
             assert not self.weight_tying
-            for w in [self.tok_embeddings.weight, self.output.weight]:
+            if self.tok_embeddings is not None:
                 nn.init.trunc_normal_(
-                    w,
+                    self.tok_embeddings.weight,
                     mean=0.0,
                     std=init_std,
                     a=-3 * init_std,
                     b=3 * init_std,
                 )
-            if self.args.mup and self.args.readout_zero_init:
-                nn.init.zeros_(self.output.weight)
-                # self.output.weight.zero_()
-        else:
-            init_std = init_std or (self.dim ** (-0.5))
-            nn.init.trunc_normal_(
-                self.tok_embeddings.weight,
-                mean=0.0,
-                std=init_std,
-                a=-3 * init_std,
-                b=3 * init_std,
-            )
-            if not self.weight_tying:
+            if self.output is not None:
                 nn.init.trunc_normal_(
                     self.output.weight,
                     mean=0.0,
@@ -197,6 +193,28 @@ class LMTransformer(BaseTransformer):
                     a=-3 * init_std,
                     b=3 * init_std,
                 )
+                if self.args.mup and self.args.readout_zero_init:
+                    nn.init.zeros_(self.output.weight)
+                    # self.output.weight.zero_()
+        else:
+            init_std = init_std or (self.dim ** (-0.5))
+            if self.tok_embeddings is not None:
+                nn.init.trunc_normal_(
+                    self.tok_embeddings.weight,
+                    mean=0.0,
+                    std=init_std,
+                    a=-3 * init_std,
+                    b=3 * init_std,
+                )
+            if self.output is not None:
+                if not self.weight_tying:
+                    nn.init.trunc_normal_(
+                        self.output.weight,
+                        mean=0.0,
+                        std=init_std,
+                        a=-3 * init_std,
+                        b=3 * init_std,
+                    )
 
 
 # Optional policy for activation checkpointing. With None, we stick to the default (defined distributed.py: default_no_recompute_ops)
@@ -287,7 +305,9 @@ def tp_parallelize(model, tp_mesh, model_args: LMTransformerArgs, distributed_ar
     # NOTE: At the cost of model code change, we can accelerate Sequence Parallel
     #       by folding (and unfolding) the batch dimension and the sequence dimension.
     #       Examples can be found at https://github.com/pytorch/torchtitan/pull/437
-    for layer in model.layers:
+
+    # for layer in model.layers:
+    for _, layer in model.layers.items():
         layer_plan = {
             "attention_norm": SequenceParallel(),
             "attention": prepare_module_input(

@@ -21,6 +21,8 @@ class OptimArgs:
     beta2: float = 0.95
     clip: float = 1.0
 
+    fused: bool = True
+
     scheduler: str = "cosine"
     warmup: int = 2000
     lr_min_ratio: float = 0.1
@@ -160,7 +162,8 @@ def get_optimizer(model, args, model_args, dist_args, device_mesh):
         opt_kwargs = {
             'betas': (args.beta1, args.beta2),
             'eps': args.epsilon,
-            'fused': True,
+            'fused': args.fused,
+            'foreach': not args.fused,
         }
     elif args.opt_cls_name.lower() == 'shampoo':
         opt_kwargs = {

@@ -1169,9 +1169,14 @@ class BaseTransformer(nn.Module):
             assert not self.args.qk_norm, "ngpt already normalized qk"
             assert not self.args.residual_post_norm, "ngpt already normalized residual output"
 
-        self.layers = nn.ModuleList()
-        for _ in range(args.n_layers):
-            self.layers.append(TransformerBlock(args))
+        # self.layers = nn.ModuleList()
+        # for _ in range(args.n_layers):
+        #     self.layers.append(TransformerBlock(args))
+
+        # for PP, it's easy to split to have layer_id as keys
+        self.layers = nn.ModuleDict()
+        for layer_id in range(args.n_layers):
+            self.layers[str(layer_id)] = TransformerBlock(args)
 
         ## caching v1 for resformer
         self.v1 = None
@@ -1191,7 +1196,8 @@ class BaseTransformer(nn.Module):
     ):
         freq_cis = self.rope_embeddings(seqlen=self.max_seqlen, tok_idx=tok_idx)
 
-        for i, layer in enumerate(self.layers):
+        # for i, layer in enumerate(self.layers):
+        for i, layer in self.layers.items():
             h = layer(h, freq_cis, tok_idx=tok_idx, mask=mask, attn_impl=attn_impl, v1=self.v1, layer_idx=i)
             if self.args.residual_value and isinstance(h, Tuple):
                 h, xv = h
@@ -1207,7 +1213,9 @@ class BaseTransformer(nn.Module):
 
     def init_weights(self):
         self.reset_parameters(init_std=self.init_base_std)
-        for depth, layer in enumerate(self.layers):
+        # for depth, layer in enumerate(self.layers):
+        for depth, layer in self.layers.items():
+            depth = int(depth)
             factor = {
                 InitStdFactor.CURRENT_DEPTH: (2 * (depth + 1)) ** 0.5, # mitchell init
                 InitStdFactor.GLOBAL_DEPTH: (2 * (len(self.layers) + 1)) ** 0.5,  # classic residual discount (gpt-2 like)

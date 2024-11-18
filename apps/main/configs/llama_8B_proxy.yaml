@@ -8,6 +8,7 @@ seed: 777
 
 ########################################
 distributed:
+  # model_dtype: fp32
   model_dtype: bf16
   matmul_allow_tf32: false
   selective_activation_checkpointing: false
@@ -16,6 +17,7 @@ distributed:
   dp_replicate: ${oc.env:DP_DEGREE}
   dp_shard: ${oc.env:DP_SHARD_DEGREE}
   tp_size: ${oc.env:TP_DEGREE}
+  pp_size: ${oc.env:PP_DEGREE}
   fsdp_type: ${oc.env:FSDP_TYPE}
 
 ########################################

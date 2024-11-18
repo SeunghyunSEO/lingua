@@ -151,15 +151,14 @@ def validate_train_args(args: TrainArgs, output_size: int):
         args.distributed.dp_replicate
         * args.distributed.dp_shard
         * args.distributed.tp_size
+        * args.distributed.pp_size
         != get_world_size()
     ):
         assert get_world_size() % args.distributed.dp_shard == 0
         args.distributed.dp_replicate = get_world_size() // args.distributed.dp_shard
 
         assert args.distributed.dp_replicate % args.distributed.tp_size == 0
-        args.distributed.dp_replicate = (
-            args.distributed.dp_replicate // args.distributed.tp_size
-        )
+        args.distributed.dp_replicate = args.distributed.dp_replicate // (args.distributed.tp_size * args.distributed.pp_size)
 
         logger.warning(
             f"Setting Data Parallel size to {args.distributed.dp_replicate * args.distributed.dp_shard}"
@@ -168,6 +167,7 @@ def validate_train_args(args: TrainArgs, output_size: int):
             args.distributed.dp_replicate
             * args.distributed.dp_shard
             * args.distributed.tp_size
+            * args.distributed.pp_size
             == get_world_size()
         )
 
@@ -192,6 +192,10 @@ def validate_train_args(args: TrainArgs, output_size: int):
     ), "Don't profile during probe step"
     if args.logging.wandb is not None:
         args.logging.wandb.name = args.name
+
+    if args.probe_freq is not None and args.distributed.tp_size > 1:
+        logger.info(f"for TP, probing is not supported yet (set {args.probe_freq} as None)")
+        args.probe_freq = None
 
     if args.probe_freq is not None:
         assert (
@@ -267,32 +271,134 @@ def train(args: TrainArgs):
 
         model_param_count = get_num_params(model)
 
-        model = parallelize_model(
-            model,
-            world_mesh,
-            args.model,
-            args.distributed,
-            fsdp_grouping_plan=build_fsdp_grouping_plan(args.model),
-            tp_parallelize=tp_parallelize,
-            no_recompute_ops=get_no_recompute_ops(),
-            use_shampoo=args.optim.opt_cls_name=='shampoo',
-        )
-        
-        # Once we shard the model on different gpus we can actually initialize the model
-        # First we create empty tensors of the correct shapes
-        model = model.to_empty(device="cuda")
-        # Then we init the model. Please make sure this function initializes *ALL* parameters
-        # and buffers, otherwise you will have random values in the unitialized tensors
-        # which will silently fail (give nan gradients for example)
+        pp_enabled = args.distributed.pp_size > 1
+        if pp_enabled:
+            assert not args.model.residual_value
+            assert not args.model.ngpt
+            assert not args.model.fused_ce
 
-        if args.checkpoint.init_ckpt_path:
-            st_dict = torch.load(args.checkpoint.init_ckpt_path)
-            model.load_state_dict(st_dict)
+            ## TODO: checkpoint save and load logic for PP
+            # PT-D Pipeline Parallel from torchtitan
+            from lingua.pipeline_parallel import pipeline_model
+            from lingua.pipeline_parallel import clip_grad_norm_
+            from lingua.transformer import cross_entropy
+
+            pp_mesh = world_mesh["pp"]
+            pp_schedule, model_parts = pipeline_model(
+                model, 
+                world_mesh, 
+                args.model, 
+                torch.device(f"cuda:{int(os.environ['LOCAL_RANK'])}"), 
+                cross_entropy,
+            )
+
+            # For PP with looped schedules, each item in model_parts is one stage-model-chunk.
+            # We need to iterate through model_parts to apply SPMD parallelisms, compilation,
+            # optimizer, and checkpointing
+            for m in model_parts:
+                # apply SPMD-style PT-D techniques
+                parallelize_model(
+                    m,
+                    world_mesh,
+                    args.model,
+                    args.distributed,
+                    fsdp_grouping_plan=build_fsdp_grouping_plan(args.model),
+                    tp_parallelize=tp_parallelize,
+                    no_recompute_ops=get_no_recompute_ops(),
+                    use_shampoo=args.optim.opt_cls_name=='shampoo',
+                )
+                m.to_empty(device="cuda")
+                m.init_weights()
+                m.train()
+
+            logger.info(f"for PP, probing is not supported yet (set {args.probe_freq} as None)")
+            args.probe_freq = None
+
+            # build optimizer after apply parallelisms to the model
+            # args.fused = False
+            if args.model.ngpt:
+                assert args.optim.weight_decay == 0.0
+                assert args.optim.warmup == 0
+            build_opt_kwargs = {
+                "args": args.optim,
+                "n_steps": args.steps,
+                "model_args": args.model,
+                "dist_args": args.distributed,
+                "device_mesh": world_mesh,
+            }
+
+            # https://github.com/pytorch/torchtitan/blob/main/torchtitan/optimizer.py#L15
+            class OptimizersContainer:
+                """Util for calling step/zero_grad on multiple optimizers needed for virtual pipeline stages"""
+                def __init__(self, optimizers):
+                    self.optimizers = optimizers
+                def step(self):
+                    for optimizer in self.optimizers:
+                        optimizer.step()
+                def zero_grad(self):
+                    for optimizer in self.optimizers:
+                        optimizer.zero_grad()
+
+            class SchedulersContainer:
+                """Util for calling step on multiple learning rate schedulers needed for virtual pipeline stages"""
+                def __init__(self, schedulers):
+                    self.schedulers = schedulers
+                def step(self):
+                    for schedulers in self.schedulers:
+                        schedulers.step()
+
+            optimizers = []
+            schedulers = []
+            for model in model_parts:
+                build_opt_kwargs["model"] = model
+                optimizer_, scheduler_ = build_optimizer(**build_opt_kwargs)
+                optimizers.append(optimizer_)
+                schedulers.append(scheduler_)
+            optimizer = OptimizersContainer(optimizers)
+            scheduler = SchedulersContainer(schedulers)
+
         else:
-            with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
-                torch.manual_seed(args.model.seed)
-                model.init_weights()
-        # check_model_value_range(model, range=10.0, std=1.0)
+            ## og lingua 
+            model = parallelize_model(
+                model,
+                world_mesh,
+                args.model,
+                args.distributed,
+                fsdp_grouping_plan=build_fsdp_grouping_plan(args.model),
+                tp_parallelize=tp_parallelize,
+                no_recompute_ops=get_no_recompute_ops(),
+                use_shampoo=args.optim.opt_cls_name=='shampoo',
+            )
+            
+            # Once we shard the model on different gpus we can actually initialize the model
+            # First we create empty tensors of the correct shapes
+            model = model.to_empty(device="cuda")
+            # Then we init the model. Please make sure this function initializes *ALL* parameters
+            # and buffers, otherwise you will have random values in the unitialized tensors
+            # which will silently fail (give nan gradients for example)
+
+            if args.checkpoint.init_ckpt_path:
+                st_dict = torch.load(args.checkpoint.init_ckpt_path)
+                model.load_state_dict(st_dict)
+            else:
+                with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
+                    torch.manual_seed(args.model.seed)
+                    model.init_weights()
+            # check_model_value_range(model, range=10.0, std=1.0)
+
+            # build optimizer after apply parallelisms to the model
+            if args.model.ngpt:
+                assert args.optim.weight_decay == 0.0
+                assert args.optim.warmup == 0
+            build_opt_kwargs = {
+                "model": model,
+                "args": args.optim,
+                "n_steps": args.steps,
+                "model_args": args.model,
+                "dist_args": args.distributed,
+                "device_mesh": world_mesh,
+            }
+            optimizer, scheduler = build_optimizer(**build_opt_kwargs)
 
         # log model size
         logger.info(f"Model size: {model_param_count:,} total parameters")
@@ -304,19 +410,6 @@ def train(args: TrainArgs):
             f"with {gpu_memory_monitor.device_capacity_gib:.2f}GiB memory"
         )
         logger.info(f"GPU memory usage: {gpu_memory_monitor}")
-
-        # build optimizer after apply parallelisms to the model
-        if args.model.ngpt:
-            assert args.optim.weight_decay == 0.0
-            assert args.optim.warmup == 0
-        optimizer, scheduler = build_optimizer(
-            model, 
-            args.optim, 
-            args.steps, 
-            args.model, 
-            args.distributed,
-            world_mesh,
-        )
 
         data_loader_state = init_dataloader_state_from_args(
             args.data, dp_rank, dp_degree
@@ -330,7 +423,10 @@ def train(args: TrainArgs):
         )
 
         checkpoint = CheckpointManager(args.checkpoint)
-        checkpoint.load(model, optimizer, train_state, world_mesh)
+        if pp_enabled:
+            pass # TODO: not implemented yet
+        else:
+            checkpoint.load(model, optimizer, train_state, world_mesh)
         # Either load from latest checkpoint or start from scratch
         if args.probe_freq is not None:
             if get_is_master():
@@ -374,14 +470,24 @@ def train(args: TrainArgs):
             train_state.acc_step += 1
             train_state.acc_step = train_state.acc_step % args.grad_acc_steps
 
-            # current optim hparams 
-            # curr_lr = float(optimizer.param_groups[0]["lr"])
-            curr_lrs, curr_wds = {}, {}
-            for idx, optim_group in enumerate(optimizer.param_groups):
-                curr_lrs[f"optim_group_{idx}"] = float(optim_group["lr"])
-                curr_wds[f"optim_group_{idx}"] = float(optim_group["weight_decay"])
-            curr_lr = curr_lrs['optim_group_0']
             
+            # current optim hparams
+            if pp_enabled:
+                # TODO
+                curr_lrs, curr_wds = {}, {}
+                for optimizer_ in optimizer.optimizers:
+                    for idx, optim_group in enumerate(optimizer_.param_groups):
+                        curr_lrs[f"optim_group_{idx}"] = float(optim_group["lr"])
+                        curr_wds[f"optim_group_{idx}"] = float(optim_group["weight_decay"])
+                    curr_lr = curr_lrs['optim_group_0']
+            else:
+                # curr_lr = float(optimizer.param_groups[0]["lr"])
+                curr_lrs, curr_wds = {}, {}
+                for idx, optim_group in enumerate(optimizer.param_groups):
+                    curr_lrs[f"optim_group_{idx}"] = float(optim_group["lr"])
+                    curr_wds[f"optim_group_{idx}"] = float(optim_group["weight_decay"])
+                curr_lr = curr_lrs['optim_group_0']
+                
             # get batch
             data_load_start = timer()
             batch, train_state.data_loader_state = next(data_loader)
@@ -500,21 +606,56 @@ def train(args: TrainArgs):
                     next(probe_mod.parameters()).grad is None
                 ), "Probe model shouldn't have grads at this point"
 
-            loss = model(input_ids, labels)
+            if pp_enabled:
+                ## IIUC, pp does not need to calculate accum and do backward, because 1f1b is implemented by shceduling
 
-            # We scale loss with grad_acc_steps so the gradient is the same
-            # regardless of grad_acc_steps
-            loss = loss / args.grad_acc_steps
-            # backward on scaled loss to create scaled gradients
-            loss.backward()
-            # For logging we undo that scaling
-            loss = loss.detach() * args.grad_acc_steps
+                # Pipeline Parallel forward / backward inside step() call
+                is_last_stage = pp_mesh.get_local_rank() == pp_mesh.size() - 1
 
-            #Q. why we dont all reduce loss for logging? -> A. see dist_mean_dict
+                # forward modules
+                if pp_mesh.get_local_rank() == 0:
+                    pp_schedule.step(input_ids)
+                elif is_last_stage:
+                    losses = []
+                    pp_schedule.step(target=labels, losses=losses)
+                else:
+                    pp_schedule.step()
 
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                model.parameters(), max_norm=args.optim.clip, foreach=True
-            )
+                # accumulate losses across pipeline microbatches
+                # https://github.com/pytorch/pytorch/blob/b379a28a95aa0b0d167f08b8d70c8b85a248309d/torch/csrc/distributed/c10d/intra_node_comm.cu#L14
+                loss = (
+                    torch.mean(torch.stack(losses))
+                    if is_last_stage
+                    else torch.Tensor([-1.0]) # https://github.com/pytorch/torchtitan/issues/547#issuecomment-2302365644
+                )
+                print(f'loss: {loss}')
+
+                # clip gradients
+                grad_norm = clip_grad_norm_(
+                    [p for m in model_parts for p in m.parameters()],
+                    args.optim.clip,
+                    foreach=True,
+                    pp_mesh=pp_mesh
+                )
+                
+            else:
+                loss = model(input_ids, labels)
+
+                # We scale loss with grad_acc_steps so the gradient is the same
+                # regardless of grad_acc_steps
+                loss = loss / args.grad_acc_steps
+                # backward on scaled loss to create scaled gradients
+                loss.backward()
+                # For logging we undo that scaling
+                loss = loss.detach() * args.grad_acc_steps
+
+                #Q. why we dont all reduce loss for logging? -> A. see dist_mean_dict
+
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), 
+                    max_norm=args.optim.clip, 
+                    foreach=True,
+                )
 
             grad_norm = (
                 grad_norm.full_tensor() if isinstance(grad_norm, DTensor) else grad_norm
@@ -547,7 +688,7 @@ def train(args: TrainArgs):
                 acc_freq=args.logging.acc_freq,
             ):
                 time_delta = timer() - time_last_log
-                wps = nwords_since_last_log / (time_delta * args.distributed.tp_size)
+                wps = nwords_since_last_log / (time_delta * args.distributed.tp_size * args.distributed.pp_size)
 
                 gpu_mem_stats = gpu_memory_monitor.get_peak_stats()
 

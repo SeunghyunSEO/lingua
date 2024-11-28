@@ -631,7 +631,7 @@ done
     - residual value works in 400M size /5B tokens scale (almost always better)
     - nGPT is trained well but i think it shows high lr sensitivity and not superior performance compared to vanilla muP baselines
 
-![mup_sweep_241114_plot](assets/images/mup_sweep/mup_sweep_241114_plot.png)
+![mup_sweep_241115_plot](assets/images/mup_sweep/mup_sweep_241115_plot.png)
 
 - for nGPT, warmup and weight decay set as 0.0
     - while baseline (muP) used 1k warmup and 0.1 wd
@@ -649,6 +649,7 @@ done
 - MFU looks good in 1node (but i didnt care small scale models's setup much because i want to use same batch size for every widths)
 
 ![mup_wider_is_always_better_mfu_fig1](assets/images/lingua_sanity_check/mup_wider_is_always_better_mfu_fig1.png)
+
 
 ### shampoo vibe check
 
